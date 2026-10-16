@@ -29,7 +29,7 @@ released** service, demonstrated by having it build and evolve a **URL shortener
 
 [![Dashboard walkthrough of the three live runs](docs/media/demo-preview.gif)](docs/media/demo.mp4)
 
-**▶ [Watch the full narrated walkthrough (MP4, with voice-over)](docs/media/demo.mp4)**: pipeline DAG with runtime
+**▶ [Watch the full narrated walkthrough (5 min, MP4 with voice-over)](docs/media/demo.mp4)**: pipeline DAG with runtime
 planning and repair loops, human clarification and approvals, mid-run amendment re-planning,
 hash-chained audit trail verification, artifact lineage, reliability metrics, the generated
 engineering summary and the agent-built code. Recorded from the real run state in `demo-state/`

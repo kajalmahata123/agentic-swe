@@ -9,8 +9,10 @@ from __future__ import annotations
 import base64
 import difflib
 import hashlib
+import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -168,35 +170,149 @@ def duration(path: Path) -> float:
     return float(out.strip())
 
 
-def mix_onto(video: Path, clips: list[tuple[float, Path]], out: Path) -> None:
-    """Place each clip at its offset (seconds) and mux the mixed narration onto `video`."""
-    args = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(video)]
-    filters, labels = [], []
-    for i, (offset, wav) in enumerate(clips, start=1):
-        args += ["-i", str(wav)]
-        ms = max(0, int(offset * 1000))
-        filters.append(f"[{i}:a]adelay={ms}|{ms}[a{i}]")
-        labels.append(f"[a{i}]")
-    filters.append(
-        f"{''.join(labels)}amix=inputs={len(clips)}:normalize=0:dropout_transition=0,"
-        "loudnorm=I=-16:TP=-1.5:LRA=11,apad[aout]"
-    )  # pad to full video length
-    args += [
-        "-filter_complex",
-        ";".join(filters),
-        "-map",
-        "0:v",
-        "-map",
-        "[aout]",
-        "-c:v",
-        "copy",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "128k",
-        "-shortest",
-        "-movflags",
-        "+faststart",
-        str(out),
-    ]
-    subprocess.run(args, check=True)
+def mix_onto(video: Path, clips: list[tuple[float, Path]], out: Path) -> list[dict]:
+    """Lay clips end to end at their scene offsets (exact silence in between) and mux onto `video`.
+
+    Deterministic by construction (concat of clip + silence segments, no multi-input mixing), then
+    verified: every clip's window in the final file must contain speech, or this raises.
+    """
+    work = out.parent / (out.stem + ".narration")
+    work.mkdir(exist_ok=True)
+    try:
+        segments, manifest, cursor = [], [], 0.0
+        for n, (offset, wav) in enumerate(sorted(clips)):
+            start = max(offset, cursor)  # never overlap the previous line
+            gap = start - cursor
+            if gap > 0.01:
+                silence = work / f"gap{n:02d}.wav"
+                subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-loglevel",
+                        "error",
+                        "-f",
+                        "lavfi",
+                        "-t",
+                        f"{gap:.3f}",
+                        "-i",
+                        "anullsrc=r=24000:cl=mono",
+                        "-c:a",
+                        "pcm_s16le",
+                        str(silence),
+                    ],
+                    check=True,
+                )
+                segments.append(silence)
+            norm = work / f"clip{n:02d}.wav"
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    str(wav),
+                    "-ar",
+                    "24000",
+                    "-ac",
+                    "1",
+                    "-c:a",
+                    "pcm_s16le",
+                    str(norm),
+                ],
+                check=True,
+            )
+            segments.append(norm)
+            dur = duration(norm)
+            manifest.append({"clip": wav.name, "start": round(start, 3), "duration": round(dur, 3)})
+            cursor = start + dur
+        listing = work / "concat.txt"
+        listing.write_text("".join(f"file '{seg.resolve()}'\n" for seg in segments))
+        track = work / "narration.wav"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                "error",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(listing),
+                "-c:a",
+                "pcm_s16le",
+                str(track),
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                "error",
+                "-i",
+                str(video),
+                "-i",
+                str(track),
+                "-filter_complex",
+                "[1:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,aformat=channel_layouts=stereo,apad[a]",
+                "-map",
+                "0:v",
+                "-map",
+                "[a]",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "160k",
+                "-ar",
+                "48000",
+                "-shortest",
+                "-movflags",
+                "+faststart",
+                str(out),
+            ],
+            check=True,
+        )
+        verify_coverage(out, manifest)
+        (Path(".demo-audio-cache") / "last_mix.json").write_text(json.dumps(manifest, indent=1))
+        return manifest
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def verify_coverage(media: Path, manifest: list[dict], floor_db: float = -40.0) -> None:
+    """Every narration window in the final file must actually be audible."""
+    silent = []
+    for item in manifest:
+        res = subprocess.run(
+            [
+                "ffmpeg",
+                "-ss",
+                str(item["start"]),
+                "-t",
+                str(max(item["duration"], 0.5)),
+                "-i",
+                str(media),
+                "-vn",
+                "-af",
+                "volumedetect",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        m = re.search(r"mean_volume: (-?[0-9.]+) dB", res.stderr)
+        level = float(m.group(1)) if m else -99.0
+        item["mean_db"] = level
+        if level < floor_db:
+            silent.append(f"{item['clip']} @ {item['start']}s ({level} dB)")
+    if silent:
+        raise RuntimeError("narration missing in final audio for: " + "; ".join(silent))
