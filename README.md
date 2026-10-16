@@ -27,15 +27,23 @@ released** service, demonstrated by having it build and evolve a **URL shortener
 
 ## Demo video
 
-[![Dashboard walkthrough of the three live runs](docs/media/demo-preview.gif)](docs/media/demo.mp4)
+https://github.com/user-attachments/assets/9ee6e553-2b43-42fc-a3ba-5123148ee97c
 
-**▶ [Watch the full narrated walkthrough (5 min, MP4 with voice-over)](docs/media/demo.mp4)**: pipeline DAG with runtime
-planning and repair loops, human clarification and approvals, mid-run amendment re-planning,
-hash-chained audit trail verification, artifact lineage, reliability metrics, the generated
-engineering summary and the agent-built code. Recorded from the real run state in `demo-state/`
-by [`scripts/record_demo.py`](scripts/record_demo.py); the voice-over is generated with Gemini TTS
-([`scripts/narration.py`](scripts/narration.py)) and time-aligned to each scene. Regenerate with
-`make demo-video` (silent) or `make demo-video NARRATE=1` (needs `GEMINI_API_KEY` in `.env`).
+**5-minute narrated walkthrough** of the oversight dashboard over the three live runs:
+- the pipeline DAG, with runtime planning and repair loops
+- human clarification and approvals
+- re-planning after a mid-run amendment
+- verifying the hash-chained audit trail
+- artifact lineage and reliability metrics
+- the generated engineering summary and the agent-built code
+
+If the player doesn't load, [download the MP4](docs/media/demo.mp4).
+
+It was recorded from the real run state in `demo-state/` by
+[`scripts/record_demo.py`](scripts/record_demo.py). The voice-over is generated with Gemini TTS
+([`scripts/narration.py`](scripts/narration.py)), each line is checked against its transcript, and
+each line is time-aligned to its scene. Regenerate with `make demo-video` (silent) or
+`make demo-video NARRATE=1` (needs `GEMINI_API_KEY` in `.env`).
 
 ## Documentation
 
