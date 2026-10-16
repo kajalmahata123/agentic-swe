@@ -5,11 +5,16 @@ orchestrator (Anthropic Messages API, own agent loop). Numbers below come from e
 audit trail (`sdlc metrics <run>`, `sdlc audit <run> --verify`) and artifacts. Per-run
 engineering summaries are generated at `.sdlc/runs/<run>/ENGINEERING_SUMMARY.md`.
 
+> **Explore these exact runs yourself, without an API key:** `make demo` restores the recorded
+> state from [`demo-state/`](../demo-state) and opens the dashboard at http://127.0.0.1:8765.
+> Or use the CLI with `SDLC_HOME=.sdlc-demo`: `sdlc status <run>`, `sdlc audit <run> --verify`,
+> `sdlc lineage <run> release`, `sdlc report <run>`, `sdlc graph <run>`.
+
 | Scenario | Run | Input | Outcome |
 |---|---|---|---|
 | Greenfield | `run_c856232d1346` | well-defined requirement for a new service | **released v1.0.0** |
-| Brownfield | `run_2e7440e535cd` | change request + bug report on the v1.0.0 code | see §2 |
-| Ambiguous | `run_9f7e81be929b` | "make it faster and more trustworthy" + mid-run amendment | see §3 |
+| Brownfield | `run_2e7440e535cd` | change request + bug report on the v1.0.0 code | **released v1.1.0** |
+| Ambiguous | `run_9f7e81be929b` | "make it faster and more trustworthy" + mid-run amendment | **released v1.2.0** |
 
 ---
 
@@ -122,7 +127,12 @@ The seed is the released v1.0.0 repository from the greenfield run.
   iteration. The engine treated it as a transient failure, discarded the worktree and
   restarted the attempt. The test stage's timeout is now 60 minutes for future runs.
 
-_Result:_ see the run summary `.sdlc/runs/run_2e7440e535cd/ENGINEERING_SUMMARY.md`.
+### Result
+* **Released v1.1.0 after a human release sign-off:** 338/338 tests, 99.06 % coverage, contract
+  and FR traceability complete, security 0 high (3 medium, 3 low).
+* **Metrics:** 22 attempts, 3 retries (all from the network faults), 1 rollback, 3 approvals,
+  ≈ $13.13. Audit chain intact (514 events).
+* Summary: `demo-state/runs/run_2e7440e535cd/ENGINEERING_SUMMARY.md`.
 
 ---
 
@@ -163,7 +173,23 @@ clicks per hour during the TV ad slots."* The orchestrator:
    produced a **new design that needed a fresh approval**, because approvals are bound to
    content hashes and the old approval did not carry over.
 
-_Result:_ see the run summary `.sdlc/runs/run_9f7e81be929b/ENGINEERING_SUMMARY.md`.
+### Result
+* The final specification carries both the clarified intent and the amendment. Its **13 FRs**
+  include automatic link expiry enforced on redirect, setting/changing/clearing expiry,
+  **hourly click counts**, and an idempotent startup schema upgrade for existing databases,
+  next to the hardening work (HEAD probes, contention-tolerant redirects, configurable pool,
+  bounded-memory stats).
+* Verification initially failed on 3 tests → **repair loop** (`repair-1 → verify-2`) fixed two
+  root causes → **404/404 tests, 99.78 % coverage, 11/11 must-FRs traced**; security 0 high.
+* **Released v1.2.0** after a human release sign-off. The re-planned design was approved by the
+  delegated approver (recorded as `human:claude-on-behalf-of-kajalmahata`, so delegation is
+  visible in the audit trail).
+* **Metrics:** 29 attempts, 5 re-plans, 1 repair loop, 1 retry, 1 rollback, 8 approvals,
+  ≈ $21.44. Audit chain intact (778 events).
+* **Lineage** (`sdlc lineage run_9f7e81be929b release`): release ← release_readiness ←
+  verification_report v2 ← design v2 ← requirements_spec v3 ← requirement **v3** (original
+  brief → + clarification answers → + amendment).
+* Summary: `demo-state/runs/run_9f7e81be929b/ENGINEERING_SUMMARY.md`.
 
 ---
 

@@ -321,6 +321,33 @@ def cmd_graph(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_snapshot(args: argparse.Namespace) -> int:
+    from sdlc.engine.bootstrap import home
+    from sdlc.snapshot import snapshot
+
+    runs = snapshot(Path(args.home) if args.home else home(), Path(args.out))
+    print(c("ok", f"snapshot of {len(runs)} runs written to {args.out}: {', '.join(runs)}"))
+    return 0
+
+
+def cmd_restore(args: argparse.Namespace) -> int:
+    from sdlc.snapshot import restore
+
+    try:
+        runs = restore(Path(args.source), Path(args.home), force=args.force)
+    except FileExistsError as exc:
+        print(c("fail", str(exc)))
+        return 2
+    print(c("ok", f"restored {len(runs)} runs into {args.home}"))
+    print(
+        c(
+            "dim",
+            f"inspect: SDLC_HOME={args.home} sdlc runs | status <run> | audit <run> --verify | dashboard",
+        )
+    )
+    return 0
+
+
 def cmd_dashboard(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -412,6 +439,17 @@ def build_parser() -> argparse.ArgumentParser:
     g = sub.add_parser("graph", help="mermaid diagram of a run's dependency graph")
     g.add_argument("run_id")
     g.set_defaults(fn=cmd_graph)
+
+    sn = sub.add_parser("snapshot", help="write a portable, committable snapshot of all runs")
+    sn.add_argument("--out", default="demo-state")
+    sn.add_argument("--home", help="state home to snapshot (default: $SDLC_HOME or .sdlc)")
+    sn.set_defaults(fn=cmd_snapshot)
+
+    rs2 = sub.add_parser("restore", help="rebuild a state home from a snapshot (no API key needed)")
+    rs2.add_argument("--from", dest="source", default="demo-state")
+    rs2.add_argument("--home", default=".sdlc-demo")
+    rs2.add_argument("--force", action="store_true")
+    rs2.set_defaults(fn=cmd_restore)
 
     d = sub.add_parser("dashboard", help="web dashboard for oversight and approvals")
     d.add_argument("--host", default="127.0.0.1")

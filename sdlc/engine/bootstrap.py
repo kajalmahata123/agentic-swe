@@ -38,6 +38,14 @@ def open_store() -> Store:
     return Store(home() / "state.db")
 
 
+def workspace_path(meta: dict[str, Any]) -> Path:
+    """A run's repo. Falls back to <home>/runs/<id>/repo so restored snapshots work on any machine."""
+    recorded = Path(meta.get("workspace") or "")
+    if meta.get("workspace") and recorded.exists():
+        return recorded
+    return runs_dir() / meta["id"] / "repo"
+
+
 def load_scenario(path: str | Path) -> dict[str, Any]:
     with open(path) as fh:
         data = yaml.safe_load(fh)
@@ -130,7 +138,7 @@ def load_context(
         policy=policy,
         approvals=ApprovalService(store, audit, policy, mode=config.approve_mode, operator=config.operator),
         provider=provider or build_provider(),
-        workspace=GitWorkspace(Path(meta["workspace"])),
+        workspace=GitWorkspace(workspace_path(meta)),
         graph=graph,
         states=states,
         config=config,

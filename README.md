@@ -52,6 +52,29 @@ cp .env.example .env            # then put your key in .env (never in .env.examp
 make test                       # offline suite: real engine, git, pytest; scripted agents
 ```
 
+## Explore the recorded live runs (no API key needed)
+
+The three scenarios were run live; their complete state (audit trails, approvals, agent
+transcripts, artifacts, per-node diffs, releases) is committed as a portable snapshot in
+[`demo-state/`](demo-state).
+
+```bash
+make setup
+make demo            # restores demo-state -> .sdlc-demo, opens http://127.0.0.1:8765
+# or via CLI:
+.venv/bin/sdlc restore --from demo-state --home .sdlc-demo --force
+SDLC_HOME=.sdlc-demo .venv/bin/sdlc runs
+SDLC_HOME=.sdlc-demo .venv/bin/sdlc status run_9f7e81be929b
+SDLC_HOME=.sdlc-demo .venv/bin/sdlc audit run_9f7e81be929b --verify
+SDLC_HOME=.sdlc-demo .venv/bin/sdlc lineage run_9f7e81be929b release
+```
+
+| Run | Scenario | Result |
+|---|---|---|
+| `run_c856232d1346` | greenfield | v1.0.0 · 165 tests · 99.15 % cov |
+| `run_2e7440e535cd` | brownfield | v1.1.0 · 338 tests · 99.06 % cov |
+| `run_9f7e81be929b` | ambiguous (+ clarification + mid-run amendment) | v1.2.0 · 404 tests · 99.78 % cov |
+
 ## Run the three scenarios
 
 ```bash

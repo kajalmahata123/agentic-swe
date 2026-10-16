@@ -7,8 +7,13 @@ __pycache__/
 htmlcov/
 .env
 .sdlc/
+.sdlc-demo/
 runs/
 *.log
 .cortex/
 .claude/
 *.egg-info/
+
+# committed snapshot of the recorded live runs (see README "Explore the recorded live runs")
+!demo-state/
+!demo-state/**

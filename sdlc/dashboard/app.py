@@ -23,7 +23,15 @@ from pydantic import BaseModel, Field
 
 from sdlc.domain.graph import DependencyGraph
 from sdlc.domain.models import ApprovalStatus
-from sdlc.engine.bootstrap import create_run, execute, load_context, load_scenario, open_store, runs_dir
+from sdlc.engine.bootstrap import (
+    create_run,
+    execute,
+    load_context,
+    load_scenario,
+    open_store,
+    runs_dir,
+    workspace_path,
+)
 from sdlc.engine.context import RunConfig
 from sdlc.governance.approvals import ApprovalError, ApprovalService
 from sdlc.governance.audit import AuditLog
@@ -210,7 +218,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/runs/{run_id}/files")
     def files(run_id: str, path: str | None = None) -> dict[str, Any]:
-        root = Path(_run_or_404(run_id)["workspace"]).resolve()
+        root = workspace_path(_run_or_404(run_id)).resolve()
         if path is None:
             out = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True).stdout
             return {"files": [f for f in out.splitlines() if f]}
@@ -226,7 +234,10 @@ def create_app() -> FastAPI:
         if not st or not st.base_sha or not st.merge_sha:
             return ""
         out = subprocess.run(
-            ["git", "diff", st.base_sha, st.merge_sha], cwd=meta["workspace"], capture_output=True, text=True
+            ["git", "diff", st.base_sha, st.merge_sha],
+            cwd=workspace_path(meta),
+            capture_output=True,
+            text=True,
         ).stdout
         return out[:300_000]
 

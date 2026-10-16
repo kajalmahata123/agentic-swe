@@ -1,0 +1,78 @@
+{
+  "run_id": "run_2e7440e535cd",
+  "tag": "v1.1.0",
+  "commit": "9a8867737e7158996bf54d9a1cc172b64ee36327",
+  "bundle": "service-v1.1.0.tar.gz",
+  "sha256": "debdbdbc517d3ee5e433528b286d4799561467f35ba0295c7c12527f0c8c67cd",
+  "sbom": [
+    "fastapi==0.115.6",
+    "uvicorn==0.32.1",
+    "sqlalchemy==2.0.36",
+    "pydantic==2.10.4",
+    "pydantic-settings==2.7.0",
+    "httpx==0.28.1",
+    "pytest==8.3.4",
+    "pytest-cov==6.0.0"
+  ],
+  "approvals": [
+    {
+      "kind": "design",
+      "status": "approved",
+      "by": "policy:auto-approve",
+      "node": "design",
+      "comment": "auto-approved: kind is auto-approvable under policy.autonomy"
+    },
+    {
+      "kind": "change",
+      "status": "approved",
+      "by": "policy:auto-approve",
+      "node": "impl:WP-4",
+      "comment": "auto-approved: kind is auto-approvable under policy.autonomy"
+    },
+    {
+      "kind": "release",
+      "status": "approved",
+      "by": "human:kajalmahata",
+      "node": "release_gate",
+      "comment": "Release approved: all readiness checks passed, 0 high security findings."
+    }
+  ],
+  "checklist": [
+    {
+      "name": "verification_passed",
+      "passed": true,
+      "detail": "head 9a8867737e7158996bf54d9a1cc172b64ee36327",
+      "severity": "block"
+    },
+    {
+      "name": "coverage_threshold",
+      "passed": true,
+      "detail": "99.06% >= 80.0%",
+      "severity": "block"
+    },
+    {
+      "name": "design_approved",
+      "passed": true,
+      "detail": "architecture approved by policy:auto-approve",
+      "severity": "block"
+    },
+    {
+      "name": "security_clear",
+      "passed": true,
+      "detail": "0 high/critical findings",
+      "severity": "block"
+    },
+    {
+      "name": "documentation",
+      "passed": true,
+      "detail": "docs agent output present",
+      "severity": "block"
+    },
+    {
+      "name": "workspace_head_verified",
+      "passed": true,
+      "detail": "nothing merged after the last verification",
+      "severity": "block"
+    }
+  ]
+}

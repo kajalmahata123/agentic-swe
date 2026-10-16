@@ -1,0 +1,99 @@
+{
+  "run_id": "run_c856232d1346",
+  "tag": "v1.0.0",
+  "commit": "b7f1cdf39c084a13b9c7a4433739d17d159de1fc",
+  "bundle": "service-v1.0.0.tar.gz",
+  "sha256": "f7ab4850730b2afecad56c9657d32c17fec57f4873bcd79eee4a25689e02a79f",
+  "sbom": [
+    "fastapi==0.115.6",
+    "uvicorn==0.32.1",
+    "sqlalchemy==2.0.36",
+    "pydantic==2.10.4",
+    "pydantic-settings==2.7.0",
+    "httpx==0.28.1",
+    "pytest==8.3.4",
+    "pytest-cov==6.0.0"
+  ],
+  "approvals": [
+    {
+      "kind": "design",
+      "status": "approved",
+      "by": "policy:auto-approve",
+      "node": "design",
+      "comment": "auto-approved: kind is auto-approvable under policy.autonomy"
+    },
+    {
+      "kind": "change",
+      "status": "approved",
+      "by": "policy:auto-approve",
+      "node": "impl:WP-1",
+      "comment": "auto-approved: kind is auto-approvable under policy.autonomy"
+    },
+    {
+      "kind": "change",
+      "status": "approved",
+      "by": "policy:auto-approve",
+      "node": "impl:WP-4",
+      "comment": "auto-approved: kind is auto-approvable under policy.autonomy"
+    },
+    {
+      "kind": "policy_exception",
+      "status": "approved",
+      "by": "human:kajalmahata",
+      "node": "impl:WP-5",
+      "comment": "IP is HMAC-SHA256 pseudonymised in services/link_service.hash_ip before storage (NULL without salt); router only forwards it."
+    },
+    {
+      "kind": "change",
+      "status": "approved",
+      "by": "policy:auto-approve",
+      "node": "repair-1",
+      "comment": "auto-approved: kind is auto-approvable under policy.autonomy"
+    },
+    {
+      "kind": "release",
+      "status": "approved",
+      "by": "human:kajalmahata",
+      "node": "release_gate",
+      "comment": "Release approved after review of readiness checklist, security findings (0 high) and metrics."
+    }
+  ],
+  "checklist": [
+    {
+      "name": "verification_passed",
+      "passed": true,
+      "detail": "head b7f1cdf39c084a13b9c7a4433739d17d159de1fc",
+      "severity": "block"
+    },
+    {
+      "name": "coverage_threshold",
+      "passed": true,
+      "detail": "99.19% >= 80.0%",
+      "severity": "block"
+    },
+    {
+      "name": "design_approved",
+      "passed": true,
+      "detail": "a human approved the architecture",
+      "severity": "block"
+    },
+    {
+      "name": "security_clear",
+      "passed": true,
+      "detail": "0 open high/critical findings",
+      "severity": "block"
+    },
+    {
+      "name": "documentation",
+      "passed": true,
+      "detail": "docs agent output present",
+      "severity": "block"
+    },
+    {
+      "name": "workspace_head_verified",
+      "passed": true,
+      "detail": "nothing merged after the last verification",
+      "severity": "block"
+    }
+  ]
+}
