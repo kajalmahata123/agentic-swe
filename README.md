@@ -47,6 +47,35 @@ It was recorded from the real run state in `demo-state/` by
 each line is time-aligned to its scene. Regenerate with `make demo-video` (silent) or
 `make demo-video NARRATE=1` (needs `GEMINI_API_KEY` in `.env`).
 
+## What the agents generated: quick navigation
+
+Everything below was **produced by the agents** in the three live runs, exported as plain files
+([`generated/`](generated/)). Every generated codebase passes its own test suite.
+
+| | Greenfield (v1.0.0) | Brownfield (v1.1.0) | Ambiguous (v1.2.0) |
+|---|---|---|---|
+| **Requirement given** | build a URL shortener from scratch | aliases + expiry + bug BUG-77 on v1.0.0 | *"make it faster and more trustworthy"* + mid-run amendment |
+| **Run overview** | [README](generated/greenfield/README.md) | [README](generated/brownfield/README.md) | [README](generated/ambiguous/README.md) |
+| **Generated code** | [`code/`](generated/greenfield/code/) | [`code/`](generated/brownfield/code/) | [`code/`](generated/ambiguous/code/) |
+| **Generated service README** | [README](generated/greenfield/code/README.md) | [README](generated/brownfield/code/README.md) | [README](generated/ambiguous/code/README.md) |
+| **API & ops docs** | [API](generated/greenfield/code/docs/API.md) · [Ops](generated/greenfield/code/docs/OPERATIONS.md) | [API](generated/brownfield/code/docs/API.md) · [Ops](generated/brownfield/code/docs/OPERATIONS.md) | [API](generated/ambiguous/code/docs/API.md) · [Ops](generated/ambiguous/code/docs/OPERATIONS.md) |
+| **Tests** | [`tests/`](generated/greenfield/code/tests/) (165) | [`tests/`](generated/brownfield/code/tests/) (338) | [`tests/`](generated/ambiguous/code/tests/) (404) |
+| **Requirements spec** | [v1](generated/greenfield/artifacts/requirements_spec.v1.json) | [v1](generated/brownfield/artifacts/requirements_spec.v1.json) | [v3](generated/ambiguous/artifacts/requirements_spec.v3.json) (clarified + amended) |
+| **Codebase impact analysis** | — | [v1](generated/brownfield/artifacts/codebase_impact.v1.json) | [v2](generated/ambiguous/artifacts/codebase_impact.v2.json) |
+| **Design** (API, ADRs, work packages) | [v1](generated/greenfield/artifacts/design.v1.json) | [v1](generated/brownfield/artifacts/design.v1.json) | [v2](generated/ambiguous/artifacts/design.v2.json) |
+| **Execution plan** | [plan](generated/greenfield/artifacts/plan.v1.json) | [plan](generated/brownfield/artifacts/plan.v1.json) | [plan](generated/ambiguous/artifacts/plan.v1.json) |
+| **Verification report** | [report](generated/greenfield/artifacts/verification_report.v2.json) | [report](generated/brownfield/artifacts/verification_report.v1.json) | [report](generated/ambiguous/artifacts/verification_report.v2.json) |
+| **Security review** | [review](generated/greenfield/artifacts/security_review.v2.json) | [review](generated/brownfield/artifacts/security_review.v1.json) | [review](generated/ambiguous/artifacts/security_review.v1.json) |
+| **All artifacts (every version)** | [`artifacts/`](generated/greenfield/artifacts/) | [`artifacts/`](generated/brownfield/artifacts/) | [`artifacts/`](generated/ambiguous/artifacts/) |
+| **Agent transcripts** | [`transcripts/`](generated/greenfield/transcripts/) | [`transcripts/`](generated/brownfield/transcripts/) | [`transcripts/`](generated/ambiguous/transcripts/) |
+| **Approvals & decisions** | [approvals](generated/greenfield/approvals.json) · [decisions](generated/greenfield/decisions.json) | [approvals](generated/brownfield/approvals.json) · [decisions](generated/brownfield/decisions.json) | [approvals](generated/ambiguous/approvals.json) · [decisions](generated/ambiguous/decisions.json) |
+| **Audit log** (hash-chained) | [audit_log.jsonl](generated/greenfield/audit_log.jsonl) | [audit_log.jsonl](generated/brownfield/audit_log.jsonl) | [audit_log.jsonl](generated/ambiguous/audit_log.jsonl) |
+| **How the code was built** | [git history](generated/greenfield/GIT_HISTORY.md) | [git history](generated/brownfield/GIT_HISTORY.md) | [git history](generated/ambiguous/GIT_HISTORY.md) |
+| **Live console output** | [console.log](generated/greenfield/console.log) | [console.log](generated/brownfield/console.log) | [console.log](generated/ambiguous/console.log) |
+| **Engineering summary** | [summary](generated/greenfield/ENGINEERING_SUMMARY.md) | [summary](generated/brownfield/ENGINEERING_SUMMARY.md) | [summary](generated/ambiguous/ENGINEERING_SUMMARY.md) |
+| **Release** (bundle, manifest, notes) | [v1.0.0](generated/greenfield/release/v1.0.0/) | [v1.1.0](generated/brownfield/release/v1.1.0/) | [v1.2.0](generated/ambiguous/release/v1.2.0/) |
+| **Metrics** | [metrics.json](generated/greenfield/metrics.json) | [metrics.json](generated/brownfield/metrics.json) | [metrics.json](generated/ambiguous/metrics.json) |
+
 ## Documentation
 
 > Start with the **[Design Document](docs/DESIGN.md)**, then the [Architecture overview](docs/ARCHITECTURE.md).
