@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Agentic SDLC Orchestrator</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f766e'/%3E%3Cpath d='M8 10h7v5H8zM17 17h7v5h-7zM15 12.5h3.5v7H17' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/static/css/tokens.css" />
+    <link rel="stylesheet" href="/static/css/base.css" />
+    <link rel="stylesheet" href="/static/css/forms.css" />
+    <link rel="stylesheet" href="/static/css/pipeline.css" />
+    <link rel="stylesheet" href="/static/css/views.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <div id="app" class="app">
+      <header class="topbar">
+        <button id="sidebar-toggle" class="icon-btn" type="button" aria-controls="sidebar" aria-expanded="true" aria-label="Toggle runs sidebar" title="Toggle sidebar">☰</button>
+        <a class="brand" href="#/" aria-label="Agentic SDLC Orchestrator home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" width="22" height="22"><rect width="32" height="32" rx="7" fill="currentColor" /><path d="M8 10h7v5H8zM17 17h7v5h-7zM15 12.5h3.5v7H17" fill="none" stroke="var(--bg-elev)" stroke-width="2" /></svg>
+          </span>
+          <span class="brand-name">Agentic SDLC</span>
+          <span class="brand-sub">Orchestrator · oversight console</span>
+        </a>
+        <div class="topbar-right">
+          <span id="conn" class="conn" role="status" aria-live="polite">Connected</span>
+          <button id="theme-toggle" class="icon-btn" type="button" aria-label="Change theme">◐</button>
+          <button id="settings-btn" class="icon-btn" type="button" aria-label="Settings (operator name, token)" title="Settings">⚙</button>
+        </div>
+      </header>
+
+      <aside id="sidebar" class="sidebar" aria-label="Runs">
+        <a id="inbox-link" class="inbox-link" href="#/approvals">
+          <span aria-hidden="true">✋</span>
+          <span>Approvals inbox</span>
+          <span id="inbox-count" class="badge badge-amber" hidden>0</span>
+        </a>
+        <div class="sidebar-head">
+          <h2>Runs</h2>
+          <button id="new-run" class="btn btn-primary btn-small" type="button">＋ New run</button>
+        </div>
+        <ul id="run-list" class="run-list"></ul>
+      </aside>
+
+      <main id="main" class="main" tabindex="-1">
+        <noscript><p class="pad">This dashboard needs JavaScript enabled.</p></noscript>
+      </main>
+    </div>
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>

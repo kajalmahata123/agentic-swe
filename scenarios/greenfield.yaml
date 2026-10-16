@@ -1,0 +1,26 @@
+# Greenfield: a well-defined requirement for a brand-new service.
+name: greenfield
+title: "Greenfield — URL shortener from scratch"
+mode: greenfield
+version: "1.0.0"
+requirement: |
+  Build a production-ready URL shortener HTTP service.
+
+  Core API
+  - Create a short link for a long URL; respond with the short code, the full short URL and metadata.
+  - Visiting the short URL redirects (HTTP 307) to the original URL; unknown codes return 404.
+  - Look up a link's metadata by code, and deactivate (soft-delete) a link; deactivated links stop redirecting.
+
+  Analytics
+  - Record each redirect as a click event: timestamp, referrer and user agent.
+  - Per-link stats endpoint: total clicks, clicks per day (UTC) and top referrers.
+  - Privacy: never store raw client IP addresses (store only a salted hash, or nothing).
+
+  Reliability
+  - Validate URLs: http/https only, max 2048 characters, reject other schemes (javascript:, data:, file:).
+  - Short codes are random, URL-safe and collision-safe (retry on collision, unique constraint in the DB).
+  - Creation is idempotent when the client sends an `Idempotency-Key` header.
+  - Liveness (/healthz) and readiness (/readyz, checks the database) endpoints.
+  - Consistent JSON error responses; no stack traces leak to clients.
+
+  Persistence: relational database via SQLAlchemy — SQLite by default, configurable via DATABASE_URL.

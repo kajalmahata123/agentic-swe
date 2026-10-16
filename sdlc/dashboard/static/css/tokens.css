@@ -1,0 +1,170 @@
+/* tokens.css — design tokens for the Agentic SDLC oversight console.
+   Light theme on :root; dark theme via prefers-color-scheme (unless data-theme="light")
+   and via an explicit data-theme="dark" on <html>. */
+
+:root {
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  --bg: #f3f5f8;
+  --bg-elev: #ffffff;
+  --bg-elev-2: #f7f9fb;
+  --bg-sunken: #eceff4;
+  --border: #d9dfe7;
+  --border-strong: #b9c3cf;
+  --text: #16202b;
+  --text-muted: #566376;
+  --text-faint: #7d8a9b;
+  --accent: #0f766e;
+  --accent-strong: #0b5f58;
+  --accent-soft: #d5f0ec;
+  --accent-contrast: #ffffff;
+  --focus: #2563eb;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
+  --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.18);
+
+  --st-pending: #5f6c7d;
+  --st-pending-bg: #eef1f5;
+  --st-running: #1d5fd6;
+  --st-running-bg: #e3edff;
+  --st-awaiting_approval: #a14a05;
+  --st-awaiting_approval-bg: #fff1d6;
+  --st-succeeded: #15803d;
+  --st-succeeded-bg: #e1f5e7;
+  --st-failed: #b42318;
+  --st-failed-bg: #fde7e5;
+  --st-skipped: #6b7280;
+  --st-skipped-bg: #f1f2f4;
+  --st-stale: #6d3fd1;
+  --st-stale-bg: #efe8ff;
+  --st-cancelled: #3f4753;
+  --st-cancelled-bg: #e4e7eb;
+  --st-stopped: #b45309;
+  --st-stopped-bg: #fff1d6;
+
+  --ok: var(--st-succeeded);
+  --ok-bg: var(--st-succeeded-bg);
+  --warn: var(--st-awaiting_approval);
+  --warn-bg: var(--st-awaiting_approval-bg);
+  --bad: var(--st-failed);
+  --bad-bg: var(--st-failed-bg);
+  --info: var(--st-running);
+  --info-bg: var(--st-running-bg);
+  --dyn: #8a3ffc;
+  --dyn-bg: #f1e9ff;
+
+  --diff-add: #116329;
+  --diff-add-bg: #dafbe1;
+  --diff-del: #a40e26;
+  --diff-del-bg: #ffebe9;
+  --diff-hunk: #0550ae;
+  --diff-hunk-bg: #ddf4ff;
+
+  --radius: 8px;
+  --radius-sm: 5px;
+  --sidebar-w: 300px;
+  --topbar-h: 52px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0a0f15;
+    --bg-elev: #111821;
+    --bg-elev-2: #151e29;
+    --bg-sunken: #0d131a;
+    --border: #233040;
+    --border-strong: #34465b;
+    --text: #e3e9f1;
+    --text-muted: #9aa8b9;
+    --text-faint: #708096;
+    --accent: #2dd4bf;
+    --accent-strong: #5eead4;
+    --accent-soft: #0f3a37;
+    --accent-contrast: #04201d;
+    --focus: #7aa7ff;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.55);
+
+    --st-pending: #9aa6b6;
+    --st-pending-bg: #1a222d;
+    --st-running: #6ea8ff;
+    --st-running-bg: #13233d;
+    --st-awaiting_approval: #fbbf24;
+    --st-awaiting_approval-bg: #33260a;
+    --st-succeeded: #4ade80;
+    --st-succeeded-bg: #0f2a1a;
+    --st-failed: #ff7b72;
+    --st-failed-bg: #3a1513;
+    --st-skipped: #8b95a3;
+    --st-skipped-bg: #181e26;
+    --st-stale: #b69cff;
+    --st-stale-bg: #241a3d;
+    --st-cancelled: #a3acb9;
+    --st-cancelled-bg: #1d232b;
+    --st-stopped: #fb923c;
+    --st-stopped-bg: #33200d;
+    --dyn: #c4a1ff;
+    --dyn-bg: #2a1d45;
+
+    --diff-add: #7ee2a0;
+    --diff-add-bg: #12301d;
+    --diff-del: #ffa198;
+    --diff-del-bg: #3c1618;
+    --diff-hunk: #8ec5ff;
+    --diff-hunk-bg: #102a44;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0a0f15;
+  --bg-elev: #111821;
+  --bg-elev-2: #151e29;
+  --bg-sunken: #0d131a;
+  --border: #233040;
+  --border-strong: #34465b;
+  --text: #e3e9f1;
+  --text-muted: #9aa8b9;
+  --text-faint: #708096;
+  --accent: #2dd4bf;
+  --accent-strong: #5eead4;
+  --accent-soft: #0f3a37;
+  --accent-contrast: #04201d;
+  --focus: #7aa7ff;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.55);
+
+  --st-pending: #9aa6b6;
+  --st-pending-bg: #1a222d;
+  --st-running: #6ea8ff;
+  --st-running-bg: #13233d;
+  --st-awaiting_approval: #fbbf24;
+  --st-awaiting_approval-bg: #33260a;
+  --st-succeeded: #4ade80;
+  --st-succeeded-bg: #0f2a1a;
+  --st-failed: #ff7b72;
+  --st-failed-bg: #3a1513;
+  --st-skipped: #8b95a3;
+  --st-skipped-bg: #181e26;
+  --st-stale: #b69cff;
+  --st-stale-bg: #241a3d;
+  --st-cancelled: #a3acb9;
+  --st-cancelled-bg: #1d232b;
+  --st-stopped: #fb923c;
+  --st-stopped-bg: #33200d;
+  --dyn: #c4a1ff;
+  --dyn-bg: #2a1d45;
+
+  --diff-add: #7ee2a0;
+  --diff-add-bg: #12301d;
+  --diff-del: #ffa198;
+  --diff-del-bg: #3c1618;
+  --diff-hunk: #8ec5ff;
+  --diff-hunk-bg: #102a44;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}

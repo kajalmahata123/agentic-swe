@@ -1,0 +1,21 @@
+# Brownfield: enhancement + bug investigation on the code produced by the greenfield run.
+name: brownfield
+title: "Brownfield — custom aliases, expiry, bug BUG-77"
+mode: brownfield
+seed: "latest:greenfield"     # the latest succeeded greenfield run's repository (or a path / run:<id>)
+version: "1.1.0"
+requirement: |
+  Change request CR-142 for the existing URL shortener service:
+
+  1. Custom aliases: when creating a link a client may choose its own short code
+     (3-32 characters, letters, digits, '-' and '_'). Reserved words (api, docs, redoc, healthz,
+     readyz, metrics, openapi.json) are rejected with 422; an alias that is already taken returns 409.
+  2. Link expiration: creation accepts an optional `expires_at` (ISO-8601, must be in the future).
+     Redirecting an expired link returns 410 Gone; link metadata reports whether it is expired.
+
+  Bug report BUG-77 (from support): "A link created with an upper-case scheme like HTTP://Example.com
+  was rejected, and we believe a `javascript:` URL was accepted once." Investigate the existing code,
+  fix whatever is actually wrong, and add regression tests either way.
+
+  Constraints: existing endpoints and response fields must keep working (backwards compatible);
+  existing tests must keep passing; the database schema change must be explicit in the design.

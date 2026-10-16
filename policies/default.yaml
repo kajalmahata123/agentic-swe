@@ -1,0 +1,109 @@
+# Governance policy for agent-driven changes.
+# Severity semantics:
+#   block    -> the action/diff is rejected; the node fails its exit gate (agent gets feedback)
+#   approve  -> allowed only with an explicit human policy-exception approval
+#   warn     -> recorded in the audit trail and release report, does not stop the run
+version: 1
+
+budgets:
+  max_run_cost_usd: 30.0          # safe-stop the run when exceeded
+  max_agent_turns: 60             # per agent attempt
+  max_consecutive_failures: 5     # circuit breaker -> safe-stop
+  max_repair_cycles: 2            # verify -> fix -> verify loops before escalating
+
+autonomy:
+  # Approval kinds that may be auto-approved when the run is started with --approve=auto.
+  # Release and policy exceptions are NEVER auto-approvable: a human must own them.
+  auto_approvable: [clarification, design, change, escalation]
+  never_auto: [release, policy_exception]
+
+change_control:
+  max_changed_lines_without_approval: 2500
+  # Writing here needs a human change approval (dependency / build / schema surface).
+  protected_paths:
+    - "requirements.txt"
+    - "pyproject.toml"
+    - "migrations/**"
+    - "alembic/**"
+  # Never writable by any agent.
+  forbidden_paths:
+    - ".git/**"
+    - ".git"
+    - "**/.env"
+    - ".env"
+    - "**/*.pem"
+    - "**/id_rsa*"
+
+dependencies:
+  # Runtime + test dependencies agents may declare in requirements.txt.
+  allowed:
+    - fastapi
+    - uvicorn
+    - starlette
+    - sqlalchemy
+    - pydantic
+    - pydantic-settings
+    - httpx
+    - pytest
+    - pytest-cov
+    - ruff
+    - alembic
+    - python-multipart
+
+commands:
+  # Agents run commands without a shell; argv[0..n] must match one of these prefixes.
+  allowed:
+    - ["python", "-m", "pytest"]
+    - ["python", "-m", "ruff"]
+    - ["python", "-m", "compileall"]
+    - ["python", "-m", "pip", "check"]
+    - ["pytest"]
+    - ["ruff"]
+  timeout_s: 300
+
+code_rules:
+  - id: SEC-001
+    title: dynamic code execution
+    pattern: '(?<![\w.])(eval|exec)\s*\('
+    severity: block
+    code_only: true            # ignore string literals and comments (e.g. tests asserting absence)
+  - id: SEC-002
+    title: shell=True subprocess
+    pattern: 'shell\s*=\s*True'
+    severity: block
+    code_only: true            # ignore string literals and comments (e.g. tests asserting absence)
+  - id: SEC-003
+    title: hard-coded secret
+    pattern: '(?i)(api[_-]?key|secret|password|token)\s*=\s*["''][A-Za-z0-9_\-]{16,}["'']'
+    severity: block
+  - id: SEC-004
+    title: TLS verification disabled
+    pattern: 'verify\s*=\s*False'
+    severity: block
+    code_only: true            # ignore string literals and comments (e.g. tests asserting absence)
+  - id: SEC-005
+    title: SQL built with string formatting
+    pattern: '(execute|text)\(\s*f["'']'
+    severity: block
+  - id: SEC-006
+    title: unsafe deserialisation
+    pattern: '(pickle|marshal)\.loads?\('
+    severity: approve
+    code_only: true            # ignore string literals and comments (e.g. tests asserting absence)
+  - id: SEC-007
+    title: debug mode enabled
+    pattern: 'debug\s*=\s*True'
+    severity: warn
+    code_only: true            # ignore string literals and comments (e.g. tests asserting absence)
+  - id: CMP-001
+    title: client IP must be pseudonymised before storage (privacy / GDPR)
+    # Any app file reading the client address must also hash it.
+    pattern: 'request\.client\.host|X-Forwarded-For'
+    must_cooccur: '(sha256|blake2|hmac|hash_ip|hashlib)'
+    severity: approve
+    paths: ["app/**"]
+
+release:
+  min_coverage: 80
+  require_docs: ["README.md"]
+  max_open_high_findings: 0

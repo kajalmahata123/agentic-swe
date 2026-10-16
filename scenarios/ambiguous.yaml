@@ -1,0 +1,18 @@
+# Ambiguous: a vague business ask. The requirements agent must surface blocking questions; a human
+# answers them (clarification checkpoint), and the spec is regenerated from the answers. Mid-run, the
+# product owner amends the requirement after the design is approved -> the orchestrator re-plans.
+name: ambiguous
+title: "Ambiguous — 'make it faster and more trustworthy' + mid-run change"
+mode: brownfield
+seed: "latest:greenfield"
+version: "1.2.0"
+requirement: |
+  Marketing is launching a big campaign next week and will put our short links on billboards and
+  in a TV ad. Make the link service faster and more trustworthy before then.
+amendments:
+  - after_node: design
+    author: product-owner
+    text: >-
+      Update from marketing: campaign links must stop working automatically when the campaign
+      ends (31 December, 23:59 UTC), and we need to see how many clicks each link got per hour
+      during the TV ad slots.
