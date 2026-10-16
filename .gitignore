@@ -17,3 +17,4 @@ runs/
 # committed snapshot of the recorded live runs (see README "Explore the recorded live runs")
 !demo-state/
 !demo-state/**
+.demo-dash.pid

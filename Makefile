@@ -1,6 +1,6 @@
 PY ?= .venv/bin/python
 
-.PHONY: setup test lint greenfield brownfield ambiguous demo snapshot dashboard clean
+.PHONY: setup test lint greenfield brownfield ambiguous demo demo-video snapshot dashboard clean
 
 setup:            ## create venv and install
 	python3 -m venv .venv && $(PY) -m pip install -q --upgrade pip && $(PY) -m pip install -q -e ".[dev]"
@@ -23,6 +23,12 @@ ambiguous:        ## vague requirement -> clarification -> mid-run amendment -> 
 demo:             ## explore the recorded live runs (no API key): restore demo-state + dashboard
 	$(PY) -m sdlc.cli restore --from demo-state --home .sdlc-demo --force
 	SDLC_HOME=.sdlc-demo $(PY) -m sdlc.cli dashboard
+
+demo-video:       ## re-record docs/media/demo.mp4 from demo-state (needs playwright + ffmpeg)
+	$(PY) -m pip install -q playwright && $(PY) -m playwright install chromium
+	$(PY) -m sdlc.cli restore --from demo-state --home .sdlc-demo --force
+	SDLC_HOME=.sdlc-demo $(PY) -m sdlc.cli dashboard --port 8791 & echo $$! > .demo-dash.pid; sleep 3; \
+	$(PY) scripts/record_demo.py --url http://127.0.0.1:8791; status=$$?; kill $$(cat .demo-dash.pid); rm -f .demo-dash.pid; exit $$status
 
 snapshot:         ## refresh demo-state/ from your local .sdlc runs
 	$(PY) -m sdlc.cli snapshot --out demo-state

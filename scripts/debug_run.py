@@ -1,5 +1,4 @@
 """Print the event timeline of the most recent run in an SDLC_HOME (developer aid)."""
-import sys
 from sdlc.engine.bootstrap import open_store
 
 store = open_store()
