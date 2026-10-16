@@ -69,12 +69,18 @@ class Tour:
         self.clips.append((time.time() - self.t0 + lead, wav))
         return dur + lead + 0.6
 
+    def _hold(self, hold: float, need: float) -> float:
+        """Scene length in pace units: long enough for its narration (ignored in fast prefetch passes)."""
+        if self.pace < 0.1:
+            return hold
+        return max(hold, need / self.pace)
+
     def caption(self, html: str, hold: float = 4.0, say: str | None = None) -> None:
         self.overlay()
         need = self._speak(say)
         self.page.evaluate("""(h) => { const c = document.getElementById('demo-cap');
             c.style.opacity = 0; setTimeout(() => { c.innerHTML = h; c.style.opacity = 1; }, 250); }""", html)
-        self.wait(max(hold, need / self.pace if self.pace else hold))
+        self.wait(self._hold(hold, need))
 
     def card(self, title: str, lines: list[str], hold: float = 4.5, say: str | None = None) -> None:
         self.overlay()
@@ -83,7 +89,7 @@ class Tour:
             if (!c) { c = document.createElement('div'); c.id = 'demo-card'; document.body.appendChild(c); }
             c.style.opacity = 1; c.innerHTML = '<h1>' + t + '</h1>' + ls.map(l => '<p>' + l + '</p>').join(''); }""",
                            [title, lines])
-        self.wait(max(hold, need / self.pace if self.pace else hold))
+        self.wait(self._hold(hold, need))
         self.page.evaluate("() => { const c = document.getElementById('demo-card'); if (c) { c.style.opacity = 0;"
                            " setTimeout(() => c.remove(), 600); } }")
         self.wait(0.7)

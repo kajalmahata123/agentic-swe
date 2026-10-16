@@ -7,8 +7,10 @@ the script changes. The key is read from the environment / .env and never writte
 from __future__ import annotations
 
 import base64
+import difflib
 import hashlib
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -16,7 +18,14 @@ import httpx
 
 MODEL = os.environ.get("SDLC_TTS_MODEL", "gemini-3.8-flash-tts")
 VOICE = os.environ.get("SDLC_TTS_VOICE", "Charon")
-STYLE = "Read in a calm, clear, confident product-demo voice, at a natural pace: "
+# The voice itself sets the tone. Do NOT prefix style instructions to the text: the TTS model may
+# read them aloud. Every clip is transcribed back and checked against the intended line instead.
+CHECK_MODEL = os.environ.get("SDLC_TTS_CHECK_MODEL", "gemini-3.8-flash")
+MIN_SIMILARITY = 0.85
+TRANSCRIBE_PROMPT = (
+    "Transcribe this audio verbatim. Spell out all numbers as words and letter-by-letter "
+    "acronyms as separate letters. Output only the transcript."
+)
 ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 
@@ -33,34 +42,49 @@ class Narrator:
         digest = hashlib.sha256(f"{MODEL}|{VOICE}|{text}".encode()).hexdigest()[:20]
         out = self.cache / f"{digest}.wav"
         if not out.exists():
-            raw = self.cache / f"{digest}.raw.wav"
-            raw.write_bytes(self._synthesise(text))
-            # trim leading/trailing silence so scene timing is tight
-            trim = "silenceremove=start_periods=1:start_threshold=-45dB"
-            subprocess.run(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-loglevel",
-                    "error",
-                    "-i",
-                    str(raw),
-                    "-af",
-                    f"{trim},areverse,{trim},areverse",
-                    "-ar",
-                    "24000",
-                    "-ac",
-                    "1",
-                    str(out),
-                ],
-                check=True,
-            )
-            raw.unlink()
+            last = ""
+            for _ in range(3):
+                raw = self.cache / f"{digest}.raw.wav"
+                raw.write_bytes(self._synthesise(text))
+                trimmed = self.cache / f"{digest}.tmp.wav"
+                _trim_silence(raw, trimmed)
+                raw.unlink()
+                ok, last = self.verify(trimmed, text)
+                if ok:
+                    trimmed.replace(out)
+                    break
+                trimmed.unlink()
+            else:
+                raise RuntimeError(f"TTS output never matched the script.\n want: {text}\n  got: {last}")
         return out, duration(out)
+
+    def verify(self, wav: Path, text: str) -> tuple[bool, str]:
+        """Transcribe the clip and require it to say the line, and only the line."""
+        body = {
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "inlineData": {
+                                "mimeType": "audio/wav",
+                                "data": base64.b64encode(wav.read_bytes()).decode(),
+                            }
+                        },
+                        {"text": TRANSCRIBE_PROMPT},
+                    ]
+                }
+            ]
+        }
+        resp = httpx.post(
+            ENDPOINT.format(model=CHECK_MODEL), json=body, timeout=180, headers={"x-goog-api-key": self.key}
+        )
+        resp.raise_for_status()
+        heard = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        return similarity(heard, text) >= MIN_SIMILARITY, heard
 
     def _synthesise(self, text: str) -> bytes:
         body = {
-            "contents": [{"parts": [{"text": STYLE + text}]}],
+            "contents": [{"parts": [{"text": text}]}],
             "generationConfig": {
                 "responseModalities": ["AUDIO"],
                 "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": VOICE}}},
@@ -101,6 +125,37 @@ class Narrator:
             if resp.status_code not in (429, 500, 503) or attempt == 2:
                 raise RuntimeError(f"Gemini TTS failed: HTTP {resp.status_code}: {resp.text[:300]}")
         raise RuntimeError("unreachable")
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def similarity(heard: str, wanted: str) -> float:
+    """Word-sequence similarity; penalises extra spoken words (e.g. instructions read aloud)."""
+    return difflib.SequenceMatcher(None, _words(heard), _words(wanted)).ratio()
+
+
+def _trim_silence(src: Path, dst: Path) -> None:
+    trim = "silenceremove=start_periods=1:start_threshold=-45dB"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(src),
+            "-af",
+            f"{trim},areverse,{trim},areverse",
+            "-ar",
+            "24000",
+            "-ac",
+            "1",
+            str(dst),
+        ],
+        check=True,
+    )
 
 
 def duration(path: Path) -> float:
