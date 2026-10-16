@@ -19,3 +19,4 @@ runs/
 !demo-state/**
 .demo-dash.pid
 .demo-audio-cache/
+.DS_Store
