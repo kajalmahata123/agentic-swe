@@ -24,11 +24,11 @@ demo:             ## explore the recorded live runs (no API key): restore demo-s
 	$(PY) -m sdlc.cli restore --from demo-state --home .sdlc-demo --force
 	SDLC_HOME=.sdlc-demo $(PY) -m sdlc.cli dashboard
 
-demo-video:       ## re-record docs/media/demo.mp4 from demo-state (needs playwright + ffmpeg)
+demo-video:       ## re-record docs/media/demo.mp4 from demo-state (playwright + ffmpeg; NARRATE=1 adds Gemini voice-over)
 	$(PY) -m pip install -q playwright && $(PY) -m playwright install chromium
 	$(PY) -m sdlc.cli restore --from demo-state --home .sdlc-demo --force
 	SDLC_HOME=.sdlc-demo $(PY) -m sdlc.cli dashboard --port 8791 & echo $$! > .demo-dash.pid; sleep 3; \
-	$(PY) scripts/record_demo.py --url http://127.0.0.1:8791; status=$$?; kill $$(cat .demo-dash.pid); rm -f .demo-dash.pid; exit $$status
+	$(PY) scripts/record_demo.py --url http://127.0.0.1:8791 $(if $(NARRATE),--narrate,); status=$$?; kill $$(cat .demo-dash.pid); rm -f .demo-dash.pid; exit $$status
 
 snapshot:         ## refresh demo-state/ from your local .sdlc runs
 	$(PY) -m sdlc.cli snapshot --out demo-state

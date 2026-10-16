@@ -29,11 +29,13 @@ released** service, demonstrated by having it build and evolve a **URL shortener
 
 [![Dashboard walkthrough of the three live runs](docs/media/demo-preview.gif)](docs/media/demo.mp4)
 
-**▶ [Watch the full 3-minute walkthrough (MP4)](docs/media/demo.mp4)**: pipeline DAG with runtime
+**▶ [Watch the full narrated walkthrough (MP4, with voice-over)](docs/media/demo.mp4)**: pipeline DAG with runtime
 planning and repair loops, human clarification and approvals, mid-run amendment re-planning,
 hash-chained audit trail verification, artifact lineage, reliability metrics, the generated
 engineering summary and the agent-built code. Recorded from the real run state in `demo-state/`
-by [`scripts/record_demo.py`](scripts/record_demo.py) (`make demo-video` to regenerate).
+by [`scripts/record_demo.py`](scripts/record_demo.py); the voice-over is generated with Gemini TTS
+([`scripts/narration.py`](scripts/narration.py)) and time-aligned to each scene. Regenerate with
+`make demo-video` (silent) or `make demo-video NARRATE=1` (needs `GEMINI_API_KEY` in `.env`).
 
 ## Documentation
 
