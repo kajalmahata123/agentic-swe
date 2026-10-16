@@ -1,0 +1,51 @@
+{
+  "name": "clarification_log",
+  "version": 1,
+  "hash": "689a521d33201ae3",
+  "producer": "clarify",
+  "derived_from": {
+    "requirements_spec": "a29fdf7abe9a8b61"
+  },
+  "value": {
+    "asked": [],
+    "defaults_assumed": [
+      {
+        "id": "Q-1",
+        "default": "Case-sensitive and stored as given, matching the existing generated codes. The reserved-word check is case-insensitive. The MySQL collation caveat is documented."
+      },
+      {
+        "id": "Q-2",
+        "default": "No. Any existing code gives 409. Soft-deleted and expired rows keep their code."
+      },
+      {
+        "id": "Q-3",
+        "default": "Deactivation takes precedence. An expired-only link returns 410 {\"detail\": \"Link has expired\"}."
+      },
+      {
+        "id": "Q-4",
+        "default": "Naive values are treated as UTC (consistent with the existing _as_utc). Only ISO-8601 strings are accepted, and numbers or other types give 422."
+      },
+      {
+        "id": "Q-5",
+        "default": "Automatic idempotent ALTER at startup after create_all, with the manual SQL documented in OPERATIONS.md. No Alembic in this change."
+      },
+      {
+        "id": "Q-6",
+        "default": "Superset. Keep static and favicon.ico and add metrics."
+      },
+      {
+        "id": "Q-7",
+        "default": "No limit beyond being strictly in the future at request time."
+      },
+      {
+        "id": "Q-8",
+        "default": "No. Both are set only at creation. Updating them is out of scope."
+      },
+      {
+        "id": "Q-9",
+        "default": "No change to URL validation behaviour. Add regression tests, and record the findings (likely 401 from the API key, pasted whitespace, or direct DB inserts) in CHANGELOG and the support response."
+      }
+    ],
+    "answered_before": {}
+  }
+}

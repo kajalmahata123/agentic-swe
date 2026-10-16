@@ -1,0 +1,33 @@
+{
+  "name": "impl_report:WP-2",
+  "version": 1,
+  "hash": "e73f1a37599140e9",
+  "producer": "impl:WP-2",
+  "derived_from": {
+    "requirements_spec": "177a1306cb37a92f",
+    "design": "4546f8f39faeb8aa"
+  },
+  "value": {
+    "summary": "Implemented WP-2 as designed, but 11 existing tests now fail until WP-4 merges. Removing ClickRepository.created_at_since (as the design requires) breaks StatsService.get_stats, which still calls it, so the daily stats endpoint returns 500 for now. Added LinkRepository.get_redirect_target, which runs one 4-column SELECT, loads no ORM object and returns a frozen RedirectTarget. ClickRepository now groups daily and hourly counts in SQL (daily_counts, hourly_counts). The bucket expressions are guarded per dialect (SQLite, PostgreSQL, MySQL/MariaDB) and contain no bound parameters. Public module-level statement builders let tests compile the SQL without a connection. RedirectTarget is exported from app.repositories. compileall and ruff pass; 154 of 165 tests pass. The new daily/hourly queries have not been run against any database yet.",
+    "files_changed": [
+      "app/repositories/link_repository.py",
+      "app/repositories/click_repository.py",
+      "app/repositories/__init__.py"
+    ],
+    "notes": [
+      "get_redirect_target uses select(Link.id, Link.url, Link.is_active, Link.expires_at).where(Link.code == code) and .first(): one SELECT, no ORM entity, is_active coerced with bool().",
+      "Day bucket: func.date(created_at) on sqlite/mysql/mariadb, cast(created_at, Date) otherwise. Hour bucket: strftime(literal '%Y-%m-%d %H:00:00') on sqlite, timestampadd(HOUR, hour(), date()) on mysql/mariadb, date_trunc(literal 'hour') otherwise. Only literal_column is used, so there are no bound parameters inside the bucket.",
+      "build_daily_counts_stmt and build_hourly_counts_stmt label the bucket 'bucket', then GROUP BY and ORDER BY it. The hourly WHERE is half-open: created_at >= start AND created_at < end.",
+      "_as_date accepts str/datetime/date. _as_hour parses str with datetime.fromisoformat, converts aware values to naive UTC with app.models.to_naive_utc, then floors to the hour.",
+      "daily_counts and hourly_counts get the dialect from session.get_bind().dialect.name and return sorted lists of (bucket, int count).",
+      "add, count_for_link, referrer_counts, get_by_code and LinkRepository.add are unchanged. Repositories only flush, never commit, and do not import app.api, app.services or fastapi.",
+      "compileall and ruff pass. Full pytest: 154 passed, 11 failed. All 11 failures are AttributeError: 'ClickRepository' object has no attribute 'created_at_since', raised from app/services/stats_service.py line 68 (owned by WP-4).",
+      "The new daily_counts/hourly_counts queries and the three-dialect SQL output have not been run or checked here. I can't add tests (outside my files), and the only path to these queries is the stats endpoint, which is broken until WP-4."
+    ],
+    "open_issues": [
+      "Until WP-4 merges, 11 existing tests fail and GET /api/links/{code}/stats returns 500: test_auth::test_valid_key_allows_full_management_flow, test_lookup_and_deactivate::test_clicks_survive_deactivation_and_appear_in_stats, and 9 tests in tests/test_stats.py. Cause: the design requires removing created_at_since, and StatsService.get_stats still calls it.",
+      "WP-4 fix: in app/services/stats_service.py, replace the Counter over click_repo.created_at_since(link.id, since) with click_repo.daily_counts(link.id, since), which returns a sorted list of (date, int). This should restore the 11 tests.",
+      "Test agent: add the compile test for SQLite, PostgreSQL and MySQL covering build_daily_counts_stmt, build_hourly_counts_stmt, day_bucket_expression and hour_bucket_expression, plus SQLite tests of daily_counts/hourly_counts at midnight and hour boundaries. None of this has been exercised yet."
+    ]
+  }
+}

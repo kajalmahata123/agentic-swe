@@ -1,0 +1,27 @@
+{
+  "name": "impl_report:WP-4",
+  "version": 1,
+  "hash": "9c50a2c26d43c50e",
+  "producer": "impl:WP-4",
+  "derived_from": {
+    "requirements_spec": "a29fdf7abe9a8b61",
+    "design": "c09f3c47030c55ea"
+  },
+  "value": {
+    "summary": "I implemented WP-4. The link service now supports custom aliases and link expiry, and the idempotency hash covers both new fields. Code lookups everywhere, including stats, accept '-' and '_'. `compileall` and ruff pass, and all 165 existing tests still pass. No new tests were written for the new behaviour; that is left to the test agent.\n\n**`app/services/link_service.py`**\n- **New pieces:** the four detail constants (\"Alias already in use\", \"Alias is reserved\", \"Invalid alias\", \"expires_at must be in the future\"). `CreateResult` and `LinkDetail` now carry an `is_expired` field (default False). Two module functions were added: `_to_naive_utc` and `compute_request_hash`.\n- **Idempotency hash:** a url-only request still hashes as `sha256(url)`, so keys stored before this change keep replaying. Otherwise it hashes a canonical JSON of url, alias and the expiry in UTC, so the same instant written in different offsets gives the same hash.\n- **Clock:** `LinkService` takes an optional `clock` argument. `now()` uses it if set, otherwise the module-level `utcnow` (looked up at call time, so tests can monkeypatch it), and always returns naive UTC.\n- **Creation order:** check the Idempotency-Key (400) \u2192 normalise `expires_at` and compute the hash \u2192 replay an existing key or return 409 \u2192 reject a malformed alias (422 'Invalid alias') or a reserved one (422 'Alias is reserved') \u2192 reject an `expires_at` at or before now (422).\n- **Alias path:** checks whether the code is taken (409), then does a single insert. If the insert hits the uniqueness constraint, it rolls back; if a concurrent request with the same Idempotency-Key won, that result is replayed, otherwise it returns 409 'Alias already in use'. It never calls `codes.generate_code`.\n- **Generated-code path:** the existing retry loop is unchanged apart from storing `expires_at`.\n- **Both paths** finish through a shared `_finish_create`, so an idempotency row is only committed together with a successful link.\n- **Lookup and redirect:** lookups use `codes.is_valid_lookup_code`; malformed codes still return 404 without a database query. GET and HEAD redirects check deactivation first (410 'Link has been deactivated'), then expiry (410 'Link has expired'), before any click is recorded and with no extra query. Metadata responses and replays report `is_expired` using the same clock. Deactivating a link works as before.\n\n**`app/services/stats_service.py`:** `get_stats` uses `codes.is_valid_lookup_code`, and I updated its docstring to mention expired links.",
+    "files_changed": [
+      "app/services/link_service.py",
+      "app/services/stats_service.py"
+    ],
+    "notes": [
+      "Small deviation from the spec: `_finish_create` works out `is_expired` just before the commit rather than after. The value is the same, and it avoids reloading the link from the database right after the commit.",
+      "I moved the alias insert into a private `_create_with_alias`, and redirect and HEAD now share a private `_get_redirectable` for the not-found / deactivated / expired checks. Behaviour and order are exactly as specified.",
+      "Alias and `expires_at` values are never logged."
+    ],
+    "open_issues": [
+      "WP-5 still has to wire up the HTTP layer. `app/api/deps.get_link_service` must pass `clock=getattr(request.app.state, 'clock', None)` to `LinkService`; until then a clock set on `app.state.clock` in tests has no effect, though monkeypatching `app.services.link_service.utcnow` still works.",
+      "Also for WP-5: `app/api/links.py` must call `create_link(payload.url, idempotency_key, alias=payload.alias, expires_at=payload.expires_at)` and fill in `is_expired` from `result.is_expired` and `detail.is_expired`.",
+      "Tests for the new behaviour (aliases, expiry, the idempotency hash, the alias insert race) are still owed by the test agent."
+    ]
+  }
+}

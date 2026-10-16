@@ -1,0 +1,25 @@
+{
+  "name": "impl_report:WP-3",
+  "version": 1,
+  "hash": "4f366b3928ecf625",
+  "producer": "impl:WP-3",
+  "derived_from": {
+    "requirements_spec": "a29fdf7abe9a8b61",
+    "design": "c09f3c47030c55ea"
+  },
+  "value": {
+    "summary": "I implemented WP-3 in app/schemas/links.py, with one deliberate change from the spec: `is_expired` has a default of `False` instead of being required. With it required, most of the existing test suite failed. LinkCreate now accepts `alias` and `expires_at`, and the two response models now return `expires_at` and `is_expired`. compileall passes, ruff is clean, all existing tests pass (`python -m pytest -q`), and the module doctest passes. I did not run any checks against the new fields themselves: I could only run pytest, and I can't add test files.\n\n- **Why the default:** the current app/api/links.py, which belongs to WP-5, builds LinkCreatedResponse without `is_expired`. With the field required, about 90 existing tests failed with 500 errors, so I made it default to `False`. The field is still always present in responses. The only difference is that /openapi.json does not list it as required.\n- **LinkCreate:** `url` and its validator are unchanged. `alias` is an optional strict string, 3\u201332 characters of A-Z a-z 0-9 _ -, with the length and pattern shown in OpenAPI. A second check rejects anything else, and case is kept as given. `expires_at` accepts only null, a datetime, or a string in strict ISO-8601 date-time form. Numbers, booleans, empty strings, \"tomorrow\" and date-only values are rejected, Pydantic itself rejects impossible dates like month 13, and the value is converted to UTC (naive values are treated as UTC). The \"must be in the future\" check is left to the service (WP-4), as designed. The request examples are updated.\n- **Response models:** LinkCreatedResponse gains `expires_at` (UTC with a 'Z' suffix, or null) and `is_expired`. LinkDetailResponse inherits both and is otherwise unchanged.\n- **Unchanged:** `validate_target_url`, `_is_forbidden_char`, `_as_utc`, the module doctest, all model class names, and the rule that this module imports nothing from `app.*`.",
+    "files_changed": [
+      "app/schemas/links.py"
+    ],
+    "notes": [
+      "`is_expired` defaults to `False` instead of being required; the summary explains why. Once WP-5 always passes `is_expired`, the default can be removed if /openapi.json needs to list the field as required.",
+      "A comment notes that the alias rule mirrors `app.services.codes.ALIAS_PATTERN`. That copy is the authoritative one and is repeated here only because schemas cannot import `app.*`.",
+      "The \"must be in the future\" check is intentionally not in the schema. LinkService does it with its injectable clock (WP-4)."
+    ],
+    "open_issues": [
+      "WP-5 (app/api/links.py) must pass `expires_at=link.expires_at` and `is_expired=result.is_expired` / `detail.is_expired` when building LinkCreatedResponse and LinkDetailResponse. Until then, responses show `is_expired=false` and `expires_at=null`.",
+      "WP-5 must pass `payload.alias` and `payload.expires_at` (aware UTC datetime or None) to `LinkService.create_link`."
+    ]
+  }
+}

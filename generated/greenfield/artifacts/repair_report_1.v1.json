@@ -1,0 +1,43 @@
+{
+  "name": "repair_report_1",
+  "version": 1,
+  "hash": "adeec9bcce70512c",
+  "producer": "repair-1",
+  "derived_from": {
+    "requirements_spec": "f9e39c09ed667d11",
+    "design": "69d249761c25951f",
+    "verification_report": "1fcc3d34fa554c92",
+    "security_review": "d552e2b70d463dc7",
+    "test_report": "5c8c14dbc36e3257"
+  },
+  "value": {
+    "summary": "Fixed SEC-1: every endpoint under /api/links (POST, GET /{code}, DELETE /{code}, GET /{code}/stats) now requires an API key. The key goes in the X-API-Key header and is checked once for the whole router, in constant time with hmac.compare_digest, against a new secret API_KEY setting. If API_KEY is not set, every management request is refused (fail closed) and a warning is logged at startup. A missing, wrong or unconfigured key gets 401 {\"detail\": \"Invalid or missing API key\"} with the header WWW-Authenticate: ApiKey. The redirect (GET/HEAD /{code}) and the probes (/healthz, /readyz) are still public. The full suite passes (165 tests: the original 156 plus 9 new) and ruff is clean.",
+    "files_changed": [
+      "app/core/config.py",
+      "app/api/deps.py",
+      "app/api/links.py",
+      "app/main.py",
+      "tests/conftest.py",
+      "tests/helpers.py",
+      "tests/test_config_openapi_architecture.py",
+      "tests/test_auth.py"
+    ],
+    "notes": [
+      "New setting in app/core/config.py: `api_key` (env var API_KEY), stored as a pydantic SecretStr so it never shows up in repr or logs. An empty or whitespace-only value counts as not set, and keys shorter than 16 characters are rejected at startup.",
+      "New `require_api_key` in app/api/deps.py. It reads the X-API-Key header via FastAPI's APIKeyHeader (auto_error=False), so the security scheme appears in OpenAPI as `ApiKeyAuth`. It compares the bytes with hmac.compare_digest and raises HTTPException(401). The existing JSON handler for HTTP errors keeps the WWW-Authenticate header.",
+      "app/api/links.py: the router now has `dependencies=[Depends(require_api_key)]` plus a documented 401 response. Request and response bodies and the other status codes of the approved contract are unchanged; the 401 response is new.",
+      "app/main.py: logs a warning on logger app.security when API_KEY is not set.",
+      "Test edits, flagged for human review:",
+      "tests/conftest.py: `make_client` now configures the app with a test API key and has the TestClient send it on every request. Without this, the existing tests would get 401 on management endpoints. It also takes `send_api_key=False` for unauthenticated clients, and API_KEY is added to the env vars cleared at import. No assertion changed.",
+      "tests/helpers.py: added the TEST_API_KEY and AUTH_HEADERS constants.",
+      "tests/test_config_openapi_architecture.py: test_tables_created_at_startup_with_temp_sqlite and test_env_configured_app_serves_requests build their own app outside the fixture. They now set the API key (through Settings, or through the API_KEY env var) and send the header. Their assertions are unchanged.",
+      "tests/test_auth.py (new, 9 tests) checks: 401 for a missing, empty or wrong key on all four management endpoints, with nothing created or changed; a valid key allows the full flow; redirect, HEAD and probes stay public; an unset key fails closed and the warning is logged; API_KEY parsing, blank handling and the length check; the key is never logged; OpenAPI declares the security scheme on /api/links and not on /{code} or /healthz."
+    ],
+    "open_issues": [
+      "Deployment change: the management API now refuses all requests until API_KEY (at least 16 characters) is set. Operators must provide it through their secret manager, and API clients must send the X-API-Key header.",
+      "This goes against ADR-9 and the Q-1 default ('no authentication in this iteration'). Humans should approve updating the design: ADR-9 and risk RK-1 should be marked mitigated, and a 401 response added to the /api/links* contract entries.",
+      "Docs are outside my write scope and need an update by the docs agent: docs/API.md (X-API-Key header and 401 on /api/links*), docs/OPERATIONS.md (the 'No authentication (known gap)' security note and the startup steps, adding API_KEY) and the README configuration table (API_KEY).",
+      "Possible future hardening, not done here: per-link management tokens returned at creation and stored hashed (the reviewer's 'better still' option), and key rotation (accepting several keys)."
+    ]
+  }
+}

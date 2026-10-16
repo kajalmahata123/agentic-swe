@@ -1,0 +1,948 @@
+[
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: New requirement ids continue from the existing FR-1..FR-13 and NFR-1..NFR-9, which the current tests reference. Those existing requirements stay in force and are protected by FR-21.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089468.361194
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Errors stay JSON-only ({\"detail\": ...}). No HTML error pages are introduced.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089468.361196
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: There is no migration tooling. Schema changes to existing tables are avoided, except the MySQL collation declaration (FR-19), which only affects fresh databases and is accompanied by documented DDL.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089468.361197
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: WAL and the other pragmas are applied through a SQLAlchemy connect event, and only for file-based SQLite.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089468.3611982
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Engine, pool and settings stay per app (created in create_app and stored on app.state), so tests stay isolated.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089468.3611991
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: No new runtime dependencies are added, and no network calls are made to third-party services. This rules out link-safety scanning against external reputation services.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089468.3612
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Concurrency and large-volume tests are marked slow and use generous thresholds so CI does not become flaky. The existing NFR-4 thresholds are unchanged.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089468.3612008
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: The stats endpoint keeps its current window and validation contract (days 1..365) and its response schema.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089468.361206
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Load-balancer and CDN configuration in front of the service is managed outside this codebase.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089468.361207
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-3 assumed default: Interpret trustworthy as: redirects that keep working under load, probes that tell the truth, bounded and accurate stats, case-correct matching on all backends, and docs that match the code. The other options are out of scope for this release.",
+    "rationale": "Each of the extra options is a separate product feature with its own API, data and test changes. They add to this spec rather than conflict with it, but they compete for the one-week window.",
+    "alternatives": [
+      "Reliability, monitoring, accurate analytics and correct docs (this spec)",
+      "Plus link safety: destination allow/deny lists or malware scanning",
+      "Plus human-friendly links: vanity aliases or an alphabet without confusable characters for new codes",
+      "Plus a human-friendly HTML 404/410 page for browsers"
+    ],
+    "based_on": {},
+    "ts": 1792089468.377135
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-4 assumed default: No redirect cache in this release. Performance comes from WAL, the narrow lookup and pool sizing.",
+    "rationale": "A cache conflicts with the immediate-410 contract (FR-7), which matters for phishing takedowns during a public campaign, and does not invalidate across workers or replicas.",
+    "alternatives": [
+      "No cache (deactivation is always immediate)",
+      "Per-app cache with a short TTL, invalidated on DELETE in the same process; stale for up to the TTL on other workers or replicas",
+      "Shared cache (e.g. Redis), with a new dependency and infrastructure"
+    ],
+    "based_on": {},
+    "ts": 1792089468.3771362
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-5 assumed default: Keep it synchronous and best-effort, with lock waits bounded by SQLITE_BUSY_TIMEOUT_MS.",
+    "rationale": "An asynchronous design changes the click-count visibility contract and existing tests, and risks losing clicks or leaking IPs in buffers.",
+    "alternatives": [
+      "Keep it synchronous and best-effort (counts visible immediately)",
+      "Asynchronous or batched, with a flush on shutdown (possible loss on crash; counts eventually consistent)"
+    ],
+    "based_on": {},
+    "ts": 1792089468.377137
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-6 assumed default: Keep the current counting semantics. Document that counts include automated GETs.",
+    "rationale": "Social and messaging link previews inflate counts. Flagging needs a schema change to click_events, which create_all will not apply to deployed databases.",
+    "alternatives": [
+      "Count all GETs (current behaviour)",
+      "Flag bots using a User-Agent heuristic (needs a new column and a migration)",
+      "Exclude bots from counts"
+    ],
+    "based_on": {},
+    "ts": 1792089468.377138
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-7 assumed default: Default 5000 ms, which preserves current behaviour, configurable. OPERATIONS.md recommends 1000 ms for campaign traffic on SQLite.",
+    "rationale": "This decides the default for SQLITE_BUSY_TIMEOUT_MS and the trade-off between visitor latency and analytics completeness.",
+    "alternatives": [
+      "Short wait, e.g. 200\u20131000 ms (faster redirect, may drop clicks under contention)",
+      "Current 5000 ms default (fewer dropped clicks, slower redirects under contention)"
+    ],
+    "based_on": {},
+    "ts": 1792089468.3771389
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-8 assumed default: Declare the binary collation in the model and document the DDL. No automatic migration.",
+    "rationale": "Changing the model only affects fresh databases. Existing MySQL deployments keep case-insensitive matching until the manual DDL is run.",
+    "alternatives": [
+      "Not used: declare the model collation and document the DDL only",
+      "Used: the DDL must be run as a deployment step before launch"
+    ],
+    "based_on": {},
+    "ts": 1792089468.37714
+  },
+  {
+    "node_id": "clarify",
+    "actor": "human:kajalmahata",
+    "title": "Q-1 answered: Modest: up to about 50 RPS, p95 < 100 ms, best effort (one instance is enough)",
+    "rationale": "The target decides the architecture. Modest load can be met with the WAL/pool/lean-query changes in this spec. Medium load requires a PostgreSQL deployment and driver. Large load needs caching and asynchronous click ingestion, which conflict with immediate deactivation and synchronous counts and cannot be delivered safely in one week.",
+    "alternatives": [
+      "Modest: up to about 50 RPS, p95 < 100 ms, best effort (one instance is enough)",
+      "Medium: about 500 RPS, p95 < 100 ms, 99.9% availability (needs PostgreSQL and several workers)",
+      "Large: several thousand RPS or TV-spike bursts (needs PostgreSQL, multiple replicas, possibly an edge cache and an asynchronous click pipeline)"
+    ],
+    "based_on": {},
+    "ts": 1792115744.0266051
+  },
+  {
+    "node_id": "clarify",
+    "actor": "human:kajalmahata",
+    "title": "Q-2 answered: Keep the current SQLite backend and harden it (WAL, busy_timeout, configurable pool). Add no new driver. Document the move to PostgreSQL for multi-worker or campaign scale.",
+    "rationale": "SQLite stays single-writer even with WAL, so the click write per visit limits throughput. If production is PostgreSQL or MySQL, we must add and pin a driver, validate the pool defaults for it, and FR-19's collation fix becomes urgent. A multi-instance topology also rules out any in-process cache.",
+    "alternatives": [
+      "SQLite, one instance, one worker",
+      "SQLite with several workers (not recommended)",
+      "PostgreSQL with several workers/replicas, and a pinned driver added",
+      "MySQL with several workers/replicas, and a pinned driver added"
+    ],
+    "based_on": {},
+    "ts": 1792115744.0266361
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: The production campaign profile is one app instance with one uvicorn worker, SQLite on local disk with WAL, up to ~50 RPS, redirect p95 < 100 ms, and best-effort availability (Q-1, Q-2).",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792115855.5608761
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: New requirement ids continue from the existing FR-1..FR-13 and NFR-1..NFR-9, which the current tests reference. Those requirements stay in force and are protected by FR-21.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792115855.560878
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Errors stay JSON-only ({\"detail\": ...}). No HTML error pages are introduced.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792115855.560879
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: There is no migration tooling. Schema changes to existing tables are avoided, except the MySQL-only collation declaration (FR-19), which affects only fresh databases and comes with documented DDL.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792115855.560879
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: WAL, synchronous=NORMAL and busy_timeout are applied through a SQLAlchemy connect event, and only for file-based SQLite. Enabling WAL on an existing rollback-journal database file is automatic and persistent.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792115855.5608802
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Engine, pool and settings stay per app (created in create_app and stored on app.state), so tests stay isolated.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792115855.5608802
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: No new runtime dependencies are added (in particular, no PostgreSQL or MySQL driver), and no network calls are made to third-party services.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792115855.560881
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: CI latency checks run in process through TestClient and exclude network latency. Production confirmation is the pre-launch smoke check (NFR-20).",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792115855.5608819
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Concurrency and large-volume tests are marked slow. The existing NFR-4 thresholds are unchanged.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792115855.5608819
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: The stats endpoint keeps its current window and validation contract (days 1..365) and its response schema.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792115855.560883
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-3 assumed default: Trustworthy means: redirects that keep working under load, probes that report the truth, bounded and accurate stats, case-correct matching, and docs that match the code. The other options are out of scope for this release.",
+    "rationale": "Each extra option is a separate product feature with its own API, data and test changes. They add to this spec rather than conflict with it, but they compete for the one-week window.",
+    "alternatives": [
+      "Reliability, monitoring, accurate analytics and correct docs (this spec)",
+      "Plus link safety: destination allow/deny lists or malware scanning",
+      "Plus human-friendly links: vanity aliases or an alphabet without confusable characters for new codes",
+      "Plus a human-friendly HTML 404/410 page for browsers"
+    ],
+    "based_on": {},
+    "ts": 1792115855.590327
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-4 assumed default: No redirect cache in this release. The 50 RPS / p95 < 100 ms target is met through WAL, the narrow lookup and pool sizing.",
+    "rationale": "A cache conflicts with the immediate-410 contract (FR-7), which matters for phishing takedowns. With the modest target (Q-1), it is unnecessary.",
+    "alternatives": [
+      "No cache (deactivation is always immediate)",
+      "Per-app cache with a short TTL, invalidated on DELETE in the same process",
+      "Shared cache (e.g. Redis), with a new dependency and infrastructure"
+    ],
+    "based_on": {},
+    "ts": 1792115855.590328
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-5 assumed default: Keep it synchronous and best-effort, with lock waits bounded by SQLITE_BUSY_TIMEOUT_MS. This is sufficient at ~50 RPS on SQLite with WAL.",
+    "rationale": "An asynchronous design changes the click-count visibility contract and existing tests, and risks losing clicks or leaking IPs in buffers.",
+    "alternatives": [
+      "Keep it synchronous and best-effort (counts visible immediately)",
+      "Asynchronous or batched, with a flush on shutdown (possible loss on crash; counts eventually consistent)"
+    ],
+    "based_on": {},
+    "ts": 1792115855.5903292
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-6 assumed default: Keep the current counting semantics and document that counts include automated GETs.",
+    "rationale": "Social and messaging link previews inflate counts. Flagging needs a schema change to click_events, which create_all will not apply to deployed databases.",
+    "alternatives": [
+      "Count all GETs (current behaviour)",
+      "Flag bots using a User-Agent heuristic (needs a new column and a migration)",
+      "Exclude bots from counts"
+    ],
+    "based_on": {},
+    "ts": 1792115855.5903301
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-7 assumed default: Code default stays 5000 ms to preserve current behaviour. The campaign deployment section recommends 1000 ms on SQLite, given the p95 < 100 ms target.",
+    "rationale": "This decides the default and the recommended campaign value for SQLITE_BUSY_TIMEOUT_MS: visitor latency under contention versus analytics completeness.",
+    "alternatives": [
+      "Short wait, e.g. 200\u20131000 ms (faster redirect, may drop clicks under contention)",
+      "Current 5000 ms default (fewer dropped clicks, slower redirects under contention)"
+    ],
+    "based_on": {},
+    "ts": 1792115855.5903308
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-8 assumed default: Not used for the campaign. Declare the binary collation in the model and document the DDL, with no automatic migration. FR-19 is a 'could'.",
+    "rationale": "Changing the model only affects fresh databases. Since production is SQLite (Q-2), this only matters for other deployments.",
+    "alternatives": [
+      "Not used: declare the model collation and document the DDL only",
+      "Used: the DDL must be run as a deployment step before launch"
+    ],
+    "based_on": {},
+    "ts": 1792115855.5903318
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-9 assumed default: Operations runs it with their existing tooling, following the checklist in OPERATIONS.md (NFR-20). No load tool is added to this repository.",
+    "rationale": "The in-process CI tests (NFR-10, NFR-19) exclude network and host differences. Only a check on the real host confirms the p95 < 100 ms target.",
+    "alternatives": [
+      "Operations runs it with an existing load tool against a dedicated test link",
+      "Skip it and rely on the CI tests and startup log verification"
+    ],
+    "based_on": {},
+    "ts": 1792115855.590333
+  },
+  {
+    "node_id": "design",
+    "actor": "human:kajalmahata",
+    "title": "design approved",
+    "rationale": "Approved: matches the answered targets (modest load, hardened SQLite).",
+    "alternatives": [],
+    "based_on": {
+      "subject": "5b05e371b746bf92"
+    },
+    "ts": 1792116613.669913
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-1: Harden SQLite at the engine level: WAL and synchronous=NORMAL through a connect event, busy_timeout through the pysqlite timeout connect arg",
+    "rationale": "For file-based SQLite URLs, create_db_engine registers a 'connect' event listener that calls apply_sqlite_pragmas(dbapi_connection). That function runs the literal statements 'PRAGMA journal_mode=WAL' and 'PRAGMA synchronous=NORMAL' on a DBAPI cursor and tolerates failure: it logs a WARNING and continues in the existing journal mode. busy_timeout is set by passing connect_args={'check_same_thread': False, 'timeout': (SQLITE_BUSY_TIMEOUT_MS + 0.5) / 1000}. CPython computes sqlite3_busy_timeout as (int)(timeout*1000), so the +0.5 makes PRAGMA busy_timeout report exactly SQLITE_BUSY_TIMEOUT_MS with no float truncation. The default of 5000 equals today's pysqlite default. \u2014 With WAL, readers never block behind the click and create writers, so the redirect lookup is not stalled. synchronous=NORMAL removes the fsync per commit in WAL mode, which is safe against corruption; at most the last transactions can be lost on power failure, which is acceptable for best effort. Setting busy_timeout through the connect arg avoids building a PRAGMA with string formatting, which is banned by policy. The connect event applies to every pooled connection, and WAL persists in the file, so the deployed database upgrades automatically with no manual step.",
+    "alternatives": [
+      "Formatted 'PRAGMA busy_timeout=%d' (rejected: SQL string formatting is banned by policy)",
+      "Move production to PostgreSQL now (rejected by Q-2: no new driver; documented only)",
+      "Keep rollback-journal mode and only shorten busy_timeout (rejected: lookups would still block behind writers)"
+    ],
+    "based_on": {
+      "requirements_spec": "2bad39293c85110d"
+    },
+    "ts": 1792116392.354342
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-2: Configurable pool only where a QueuePool exists",
+    "rationale": "Pass pool_size, max_overflow and pool_timeout to create_engine for file-based SQLite (SQLAlchemy 2.0 uses QueuePool there) and for non-SQLite URLs. Do not pass them for in-memory SQLite ('sqlite://', ':memory:', 'mode=memory', 'file::memory:'), which uses SingletonThreadPool and would reject max_overflow and pool_timeout. \u2014 This meets FR-16 and the defaults (5/10/30) reproduce current behaviour. In-memory URLs used in tests keep working.",
+    "alternatives": [
+      "Force QueuePool for all URLs (breaks in-memory semantics)",
+      "NullPool for SQLite (connect cost per request; pragmas re-run on every request)"
+    ],
+    "based_on": {
+      "requirements_spec": "2bad39293c85110d"
+    },
+    "ts": 1792116392.354346
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-3: HEAD probes as dedicated hidden routes on the health router",
+    "rationale": "Add @router.head('/healthz', include_in_schema=False) and @router.head('/readyz', include_in_schema=False), each returning an empty Response(200). The GET routes are unchanged. Readiness logic is shared through a private _check_ready(db) helper. \u2014 The health router is included before the redirect router, so HEAD /healthz and HEAD /readyz become FULL matches before HEAD /{code}. The OpenAPI document stays identical: there is no new 'head' operation and no duplicate-operationId warning, which api_route(methods=['GET','HEAD']) would cause. POST still produces a 405 because the path matches only partially.",
+    "alternatives": [
+      "api_route(methods=['GET','HEAD']) (adds head operations to OpenAPI and emits duplicate operation-id warnings)",
+      "Excluding reserved codes inside redirect_head (couples the redirect to probe knowledge; the 404 semantics would still be wrong)"
+    ],
+    "based_on": {
+      "requirements_spec": "2bad39293c85110d"
+    },
+    "ts": 1792116392.354348
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-4: Stats daily buckets aggregated in SQL through a dialect-compiled UtcDate construct",
+    "rationale": "click_repository defines class UtcDate(FunctionElement) with type=Date() and inherit_cache=True, compiled with sqlalchemy.ext.compiler.compiles. The default (PostgreSQL and others) compiles to CAST(x AS DATE); sqlite and mysql/mariadb compile to date(x) / DATE(x). The compiler functions delegate to compiler.process(cast(...)) and compiler.process(func.date(...)), so no SQL string formatting is needed. The query is GROUP BY day ORDER BY day for one link_id with created_at >= since. Referrer counts keep GROUP BY on the raw column; '' and NULL are merged in Python, and the service still sorts and caps at 10. \u2014 Stored timestamps are naive UTC, so a date cast with no timezone conversion gives exact UTC-day bucketing on all three dialects. Memory is O(days + referrer groups) (NFR-13). The construct compiles for all dialects without a driver, which makes the FR-18 compile test straightforward. Keeping the Python sort for referrers preserves the exact ordering semantics, including NULL last, independent of database collation. Grouping on the raw column avoids the PostgreSQL GROUP BY bound-parameter mismatch that nullif(referrer, :p) would cause.",
+    "alternatives": [
+      "Stream timestamps with yield_per and bucket in Python (O(1) memory but O(clicks) time)",
+      "func.date everywhere (PostgreSQL date() semantics are less explicit; CAST is clearer)",
+      "SQL ORDER BY plus LIMIT 10 for referrers (collation-dependent tie order; NULL ordering differs by dialect)"
+    ],
+    "based_on": {
+      "requirements_spec": "2bad39293c85110d"
+    },
+    "ts": 1792116392.35435
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-5: Narrow redirect lookup returning a NamedTuple, with no cache",
+    "rationale": "LinkRepository.get_redirect_target(code) runs select(Link.id, Link.url, Link.is_active).where(Link.code == code) and returns RedirectTarget(id, url, is_active) or None. Redirect resolution uses it. Deactivation, detail and stats keep get_by_code. There is no redirect cache and no async click ingestion. \u2014 This gives the minimum hot-path SQL (FR-17) with no ORM identity-map or refresh overhead. Without a cache, the 410 after deactivation stays immediate (FR-7, Q-4), and synchronous clicks keep counts visible at once (Q-5). The 50 RPS target is met without either.",
+    "alternatives": [
+      "Per-app TTL cache (stale 307 after takedown; NFR-9 static rule)",
+      "Background or batched click writes (changes the visibility contract; possible click loss)"
+    ],
+    "based_on": {
+      "requirements_spec": "2bad39293c85110d"
+    },
+    "ts": 1792116392.354353
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-6: Click-failure logging at WARNING without exc_info",
+    "rationale": "In resolve_and_record_click, any exception from the click add or commit is followed by session.rollback() (its own failure is suppressed) and exactly one logger.warning('failed to record click for link_id=%s error=%s', link_id, type(exc).__name__) on 'app.services.links'. There is no traceback and no exception message. The 307 is still returned. \u2014 FR-15 requires exactly one warning line without the IP, and NFR-14 forbids leaking request data. DBAPI exception text can contain bound parameters (referrer, user agent, hash), so logging only the class name is safe and still countable for the lost-clicks metric.",
+    "alternatives": [
+      "Keep logger.exception at ERROR (traceback text includes SQL parameters; noisier under contention)"
+    ],
+    "based_on": {
+      "requirements_spec": "2bad39293c85110d"
+    },
+    "ts": 1792116392.354354
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-7: MySQL case-sensitive codes through a portable type variant",
+    "rationale": "Link.code = mapped_column(String(32).with_variant(String(32, collation='utf8mb4_bin'), 'mysql', 'mariadb'), nullable=False). The docs give the manual ALTER TABLE for existing MySQL databases. \u2014 type(col.type) stays sqltypes.String and the module does not import sqlalchemy.dialects, so the existing portability test passes. DDL for SQLite and PostgreSQL is unchanged (NFR-18).",
+    "alternatives": [
+      "sqlalchemy.dialects.mysql.VARCHAR(collation=...) (violates test_orm_uses_declarative_base_and_portable_types)",
+      "An automatic migration (no migration tooling; out of scope)"
+    ],
+    "based_on": {
+      "requirements_spec": "2bad39293c85110d"
+    },
+    "ts": 1792116392.354356
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-8: Startup tuning log line built from the engine and settings, without the URL",
+    "rationale": "core/db.py provides describe_db_tuning(engine, settings) -> dict and format_db_tuning(dict) -> str. In the lifespan after create_all, main.py logs on 'app.db' at INFO: message 'database tuning ' + format_db_tuning(tuning), with extra={'db_tuning': tuning}. 'db_tuning' is added to the JsonFormatter extra fields. \u2014 Operators can confirm the campaign configuration from the logs (NFR-16/NFR-20). The URL is never included, so credentials cannot leak (NFR-15). PRAGMA values are read back from a real pooled connection, so they reflect the effective settings.",
+    "alternatives": [
+      "Log the settings object (risk of leaking DATABASE_URL credentials and API_KEY)"
+    ],
+    "based_on": {
+      "requirements_spec": "2bad39293c85110d"
+    },
+    "ts": 1792116392.35436
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Production campaign profile: one app instance, one uvicorn worker, SQLite with WAL on local disk, ~50 RPS, redirect p95 < 100 ms, best-effort availability (Q-1, Q-2).",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792116963.021562
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: New ids continue from FR-1..FR-21 and NFR-1..NFR-20. Earlier requirements stay in force and are protected by FR-21.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792116963.0215628
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Errors stay JSON-only ({\"detail\": ...}). Expired links return 410 with detail 'Link has expired', and deactivated links keep their existing 410 detail.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792116963.021564
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: All timestamps are stored as naive UTC. Inputs with an offset are converted to UTC, naive inputs are treated as UTC, and outputs are serialised as UTC with 'Z' via _as_utc.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792116963.021565
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Expiry is evaluated per request against the server clock (assumed NTP-synchronised): a link is expired when now >= expires_at.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792116963.021565
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: There is no migration tooling such as Alembic. The only schema change is the nullable links.expires_at, applied by an idempotent startup upgrade (FR-26). The MySQL collation declaration affects only fresh databases.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792116963.021566
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: WAL, synchronous=NORMAL and the busy timeout are applied only to file-based SQLite. Enabling WAL on an existing database file is automatic and persists.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792116963.0215669
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Engine, pool and settings stay per app (created in create_app and stored on app.state).",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792116963.021568
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: No new runtime dependencies are added, and no calls are made to third-party services.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792116963.021569
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: CI latency checks run in process through TestClient. The production check is the pre-launch smoke test (NFR-20).",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792116963.02157
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-3 assumed default: Trustworthy means reliable redirects under load, truthful probes, links that stop at campaign end, accurate bounded analytics, and correct docs. The other options are out of scope.",
+    "rationale": "Each extra option is a separate feature that competes for the one-week window.",
+    "alternatives": [
+      "Reliability, monitoring, accurate analytics, expiry and correct docs (this spec)",
+      "Plus link-safety scanning",
+      "Plus human-friendly codes or vanity aliases",
+      "Plus HTML 404/410 pages"
+    ],
+    "based_on": {},
+    "ts": 1792116963.0399842
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-4 assumed default: No redirect cache. The target is met through WAL, the narrow lookup and pool sizing.",
+    "rationale": "A cache conflicts with immediate deactivation (FR-7) and exact-instant expiry (FR-22), and would under-count hourly clicks.",
+    "alternatives": [
+      "No cache",
+      "Per-app TTL cache",
+      "Shared cache (Redis)"
+    ],
+    "based_on": {},
+    "ts": 1792116963.039986
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-5 assumed default: Keep it synchronous and best-effort, with lock waits bounded by SQLITE_BUSY_TIMEOUT_MS.",
+    "rationale": "Asynchronous ingestion changes the visibility of click counts (including the hourly counts for TV slots) and risks losing clicks.",
+    "alternatives": [
+      "Keep synchronous, best-effort",
+      "Asynchronous or batched"
+    ],
+    "based_on": {},
+    "ts": 1792116963.0399868
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-6 assumed default: Count all GETs, and document that counts include automated GETs.",
+    "rationale": "Link previews inflate counts. Flagging needs another schema change.",
+    "alternatives": [
+      "Count all GETs",
+      "Flag via a User-Agent heuristic (new column)",
+      "Exclude bots"
+    ],
+    "based_on": {},
+    "ts": 1792116963.039988
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-7 assumed default: The code default stays 5000 ms. The campaign runbook recommends 1000 ms.",
+    "rationale": "This sets the default and the recommended value for SQLITE_BUSY_TIMEOUT_MS: redirect latency versus completeness of the hourly analytics.",
+    "alternatives": [
+      "Short wait, 200\u20131000 ms",
+      "Current 5000 ms default"
+    ],
+    "based_on": {},
+    "ts": 1792116963.039989
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-8 assumed default: Not used for the campaign. FR-19 stays a 'could'.",
+    "rationale": "The model change only affects fresh databases.",
+    "alternatives": [
+      "Not used: declare the collation and document the DDL",
+      "Used: the DDL is a pre-launch step"
+    ],
+    "based_on": {},
+    "ts": 1792116963.0399911
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-9 assumed default: Operations runs it with existing tooling, following the OPERATIONS.md checklist (NFR-20).",
+    "rationale": "The CI tests run in process and leave out network and host differences.",
+    "alternatives": [
+      "Operations, with existing tooling",
+      "Skip it"
+    ],
+    "based_on": {},
+    "ts": 1792116963.039992
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-10 assumed default: Use expires_at = 23:59:00Z on 31 December of the campaign year (taken as the coming 31 December), as the amendment literally states. Operators confirm the year with marketing before running the runbook step.",
+    "rationale": "The code does not hard-code the instant: expires_at is data set by the client and compared with now >= expires_at. The answer only changes the value operators enter and the example in the runbook. Entering a wrong value or year would cut links off early or leave them live.",
+    "alternatives": [
+      "2025-12-31T23:59:00Z (stop at the start of 23:59)",
+      "2026-01-01T00:00:00Z (stop after the 23:59 minute)",
+      "Another date"
+    ],
+    "based_on": {},
+    "ts": 1792116963.039993
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-11 assumed default: Per-link expiry (FR-23) plus PATCH for existing links (FR-24). Operators script one PATCH per campaign link and verify it with the detail endpoint. No bulk endpoint and no global cutoff.",
+    "rationale": "A global cutoff would also expire non-campaign links. A bulk endpoint means more API surface. Per-link PATCH works but means one call per link.",
+    "alternatives": [
+      "Per link: expires_at on create plus PATCH for existing links",
+      "Plus a bulk set-expiry endpoint by code list",
+      "A global CAMPAIGN_ENDS_AT setting that applies to all links"
+    ],
+    "based_on": {},
+    "ts": 1792116963.039994
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-12 assumed default: UTC hours, zero-filled, half-open [start, end), at most 744 hours, per link only. The runbook explains how to convert slot times to UTC.",
+    "rationale": "These choices change the endpoint parameters, the response shape and the query cost. Ad slots in local time may not line up with UTC hours in half-hour-offset zones.",
+    "alternatives": [
+      "UTC hours, zero-filled, max 31 days, per link",
+      "Accept a tz/offset parameter and bucket by local hour",
+      "Sparse buckets",
+      "Campaign-wide aggregate across several codes"
+    ],
+    "based_on": {},
+    "ts": 1792116963.039995
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-13 assumed default: 410 JSON 'Link has expired', consistent with deactivated links. The fallback landing page is out of scope.",
+    "rationale": "Billboards will stay up after the campaign. A fallback URL would need a new setting or a per-link field, and a different status code.",
+    "alternatives": [
+      "410 JSON {\"detail\": \"Link has expired\"}",
+      "307 to a configurable fallback URL",
+      "An HTML 'campaign ended' page"
+    ],
+    "based_on": {},
+    "ts": 1792116963.039996
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-14 assumed default: Allowed through PATCH with the API key (FR-24). Deactivation stays final.",
+    "rationale": "Allowing this supports extending the campaign and recovering from mistakes, but changes the 'stops working' guarantee into one that operators control.",
+    "alternatives": [
+      "Allow it through PATCH (null or a future value)",
+      "Expiry is final once reached"
+    ],
+    "based_on": {},
+    "ts": 1792116963.039998
+  },
+  {
+    "node_id": "design",
+    "actor": "human:claude-on-behalf-of-kajalmahata",
+    "title": "design approved",
+    "rationale": "Delegated routine approval: all exit gates passed; reviewed summary.",
+    "alternatives": [],
+    "based_on": {
+      "subject": "099daa8d7a65bfad"
+    },
+    "ts": 1792117488.792309
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-1: Harden SQLite with a connect listener, connect_args timeout and QueuePool settings",
+    "rationale": "For file-based SQLite:\n- create_engine(url, poolclass=QueuePool, pool_size, max_overflow, pool_timeout, connect_args={'check_same_thread': False, 'timeout': (SQLITE_BUSY_TIMEOUT_MS + 0.5) / 1000.0}).\n- An event.listens_for(engine, 'connect') handler executes the literal statements 'PRAGMA journal_mode=WAL' and 'PRAGMA synchronous=NORMAL' on a raw DBAPI cursor.\n- The +0.5 ms makes pysqlite's int(timeout*1000) truncation land exactly on the configured value.\n\nIn-memory SQLite gets only check_same_thread=False. Non-SQLite gets pool_pre_ping=True plus the pool settings. \u2014 WAL lets readers proceed while a writer holds the lock, which is what stops redirects queueing behind creates and clicks. The sqlite3 timeout parameter installs the busy handler without building a PRAGMA string, so the literal-only SQL policy holds. QueuePool kwargs are not valid for SingletonThreadPool/StaticPool, so in-memory URLs skip them.",
+    "alternatives": [
+      "PRAGMA busy_timeout=<n> built with formatting (violates policy)",
+      "Move to PostgreSQL now (rejected by Q-2; needs a driver)",
+      "Leave the rollback journal and only add a busy timeout (readers would still block)"
+    ],
+    "based_on": {
+      "requirements_spec": "177a1306cb37a92f"
+    },
+    "ts": 1792117483.765248
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-2: Idempotent startup ALTER instead of migration tooling",
+    "rationale": "After create_all, the lifespan calls app.core.schema.ensure_links_expires_at(engine):\n- It uses sqlalchemy.inspect on a fresh connection.\n- If 'expires_at' is not among the links columns, it runs the dialect-guarded literal ALTER inside engine.begin().\n- It logs 'added' or 'already_present'.\n- On any exception it logs an ERROR and re-raises, so startup aborts. \u2014 There is one additive, nullable column and a one-week deadline. Alembic would add a dependency, a workflow and operator steps. Without the upgrade, every redirect on the deployed DB would return 503. Failing startup loudly is better than serving 503s.",
+    "alternatives": [
+      "Alembic migrations (out of scope)",
+      "Documented manual ALTER only (operator error risk RK-11)",
+      "A separate link_expiry table (more joins on the hot path)"
+    ],
+    "based_on": {
+      "requirements_spec": "177a1306cb37a92f"
+    },
+    "ts": 1792117483.765255
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-3: Expiry evaluated in Python on the narrow lookup row, with an injectable clock",
+    "rationale": "LinkRepository.get_redirect_target selects only id, url, is_active and expires_at. LinkService._check_redirectable(target) raises GoneError() if the link is inactive, then GoneError(LINK_EXPIRED_DETAIL) if expires_at is not None and self._utcnow() >= expires_at. GET and HEAD both go through _resolve_target, which calls _check_redirectable. The clock is LinkService(now=callable|None); _utcnow() calls it, falling back to models.utcnow(), and normalises to naive UTC. \u2014 This adds no SQL statements (FR-17). The rule is evaluated on every request with no cache (FR-22), and both methods share one helper (RK-14). Deactivation takes precedence. Tests are deterministic.",
+    "alternatives": [
+      "WHERE expires_at > :now in SQL (cannot distinguish 404, 410-deactivated and 410-expired without a second query)",
+      "In-process cache of links (forbidden; breaks immediate deactivation and expiry)"
+    ],
+    "based_on": {
+      "requirements_spec": "177a1306cb37a92f"
+    },
+    "ts": 1792117483.76526
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-4: Backward-compatible idempotency hash",
+    "rationale": "request_hash = sha256(url) when expires_at is None; otherwise sha256(url + '\\n' + canonical UTC instant 'YYYY-MM-DDTHH:MM:SS.ffffffZ'). The replay check runs before the future-instant check. \u2014 Keys stored before the deploy (url-only hashes) keep replaying. The same instant written with different offsets hashes identically. Adding or changing expires_at gives 409. Replays return the stored link even after the expiry has passed, which matches how deactivated links replay.",
+    "alternatives": [
+      "Always hash a JSON payload (breaks old keys, RK-15)",
+      "Ignore expires_at in the hash (silent replay of a different payload)"
+    ],
+    "based_on": {
+      "requirements_spec": "177a1306cb37a92f"
+    },
+    "ts": 1792117483.7652638
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-5: SQL aggregation with dialect-guarded bucket expressions that use no bound parameters",
+    "rationale": "Daily and hourly stats use SELECT bucket, COUNT(id) ... WHERE link_id = :id AND created_at >= :start [AND created_at < :end] GROUP BY bucket.\n\nDay bucket:\n- sqlite: func.date(created_at)\n- postgresql (and the fallback): cast(created_at, Date)\n- mysql/mariadb: func.date(created_at)\n\nHour bucket:\n- sqlite: func.strftime(literal_column(\"'%Y-%m-%d %H:00:00'\"), created_at)\n- postgresql (and the fallback): func.date_trunc(literal_column(\"'hour'\"), created_at)\n- mysql/mariadb: func.timestampadd(literal_column('HOUR'), func.hour(created_at), func.date(created_at))\n\nResult values are normalised in Python (str -> date/datetime). Module-level statement builders take dialect_name so tests can compile them for all three dialects. \u2014 Memory is O(days) or O(hours) and the query uses the covering (link_id, created_at) index. With no bind parameters inside the bucket expression, the GROUP BY matches the SELECT expression on PostgreSQL. String formats are constants, not SQL formatting.",
+    "alternatives": [
+      "Stream timestamps with yield_per and bucket in Python (portable but O(clicks) time)",
+      "Denormalised hourly counter table (new schema, out of scope)"
+    ],
+    "based_on": {
+      "requirements_spec": "177a1306cb37a92f"
+    },
+    "ts": 1792117483.765269
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-6: Explicit HEAD routes for the probes",
+    "rationale": "health.py adds @router.head('/healthz', include_in_schema=False) and @router.head('/readyz', include_in_schema=False). They return Response(status_code=200) with an empty body. /readyz shares a private _check_database(db) helper with GET. \u2014 This guarantees an empty body and leaves the OpenAPI path and operation set untouched. The health router is included before the catch-all, so HEAD /{code} never sees these paths. POST still yields 405.",
+    "alternatives": [
+      "api_route(methods=['GET','HEAD']) (adds 'head' operations to the OpenAPI schema and relies on the server to strip the body)"
+    ],
+    "based_on": {
+      "requirements_spec": "177a1306cb37a92f"
+    },
+    "ts": 1792117483.7652748
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-7: End the read transaction before the click insert; best-effort WARNING on failure",
+    "rationale": "In resolve_and_record_click, after the lookup and checks, call self.session.rollback(). This ends the read transaction and is a transaction-boundary call, not a statement. Then call ClickRepository.add(...) and session.commit() inside try/except Exception. On failure:\n- Roll back, suppressing any secondary exception.\n- Log exactly one logger.warning('failed to record click for link_id=%s (%s)', link_id, type(exc).__name__), with no IP, no exception message and no traceback.\n- Return the URL. \u2014 This avoids SQLITE_BUSY_SNAPSHOT on the read-to-write upgrade under WAL and bounds the added latency to the busy timeout. The exception message can contain bound SQL parameters, so it is not logged. ClickRepository.add remains the patch point used by existing tests.",
+    "alternatives": [
+      "session.commit() after the read (shows up as a second COMMIT in the query budget)",
+      "BEGIN IMMEDIATE for the whole redirect (serialises reads behind writers)",
+      "Asynchronous click ingestion (out of scope, Q-5)"
+    ],
+    "based_on": {
+      "requirements_spec": "177a1306cb37a92f"
+    },
+    "ts": 1792117483.76528
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-8: Future-instant validation in the service with a 422 domain error",
+    "rationale": "Add InvalidInputError(AppError) with status 422 in app/core/errors.py. Schemas only parse and normalise (to naive UTC, non-string values rejected). LinkService raises InvalidInputError('expires_at must be in the future') using its injectable clock. StatsService raises InvalidInputError for invalid hourly ranges. \u2014 Validation that depends on the clock must use the injectable clock and must be skipped on idempotent replay. A Pydantic validator cannot do either. The error body stays {\"detail\": \"...\"}.",
+    "alternatives": [
+      "Pydantic validator calling datetime.now() (cannot be tested deterministically; would break replay)",
+      "Raise HTTPException from the services (violates layering)"
+    ],
+    "based_on": {
+      "requirements_spec": "177a1306cb37a92f"
+    },
+    "ts": 1792117483.765284
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-9: No-store on redirect-path error responses",
+    "rationale": "redirect.py catches NotFoundError and GoneError from the service and returns JSONResponse({'detail': exc.detail}, status_code=exc.status_code, headers={'Cache-Control': 'no-store'}). Other exceptions propagate to the global handlers (SQLAlchemyError -> 503). \u2014 Browsers and CDNs could otherwise cache a 410 or 404 after a link is created, cleared or extended. Expiry and PATCH changes take effect immediately (NFR-15).",
+    "alternatives": [
+      "Add no-store to every AppError in the global handler (wider blast radius)"
+    ],
+    "based_on": {
+      "requirements_spec": "177a1306cb37a92f"
+    },
+    "ts": 1792117483.765289
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-10: MySQL case-sensitive codes via a type variant",
+    "rationale": "Declare code as String(32).with_variant(String(32, collation='utf8mb4_bin'), 'mysql', 'mariadb'). Document the manual DDL for existing MySQL databases: ALTER TABLE links MODIFY code VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL; \u2014 This keeps portable sqltypes (type(col.type) is still sqltypes.String) and leaves the SQLite and PostgreSQL DDL unchanged.",
+    "alternatives": [
+      "A global collation (breaks SQLite)",
+      "Dialect-specific types from sqlalchemy.dialects (forbidden in models)"
+    ],
+    "based_on": {
+      "requirements_spec": "177a1306cb37a92f"
+    },
+    "ts": 1792117483.7652931
+  },
+  {
+    "node_id": "plan",
+    "actor": "agent:planner",
+    "title": "Execution plan: 7 packages in 4 waves",
+    "rationale": "waves [['WP-1', 'WP-3', 'WP-5'], ['WP-2', 'WP-7'], ['WP-4'], ['WP-6']]; packages in the same wave own disjoint files and run in parallel",
+    "alternatives": [],
+    "based_on": {
+      "design": "4546f8f39faeb8aa"
+    },
+    "ts": 1792117488.835207
+  },
+  {
+    "node_id": "impl:WP-1",
+    "actor": "human:claude-on-behalf-of-kajalmahata",
+    "title": "change approved",
+    "rationale": "Delegated routine approval: all exit gates passed; reviewed summary.",
+    "alternatives": [],
+    "based_on": {
+      "subject": "d18739d90f477c40"
+    },
+    "ts": 1792119554.790289
+  },
+  {
+    "node_id": "impl:WP-4",
+    "actor": "human:claude-on-behalf-of-kajalmahata",
+    "title": "change approved",
+    "rationale": "Delegated routine approval: all exit gates passed; reviewed summary.",
+    "alternatives": [],
+    "based_on": {
+      "subject": "b911489f713f7383"
+    },
+    "ts": 1792119935.5635998
+  },
+  {
+    "node_id": "tests",
+    "actor": "human:claude-on-behalf-of-kajalmahata",
+    "title": "change approved",
+    "rationale": "Delegated routine approval: all exit gates passed; reviewed summary.",
+    "alternatives": [],
+    "based_on": {
+      "subject": "c4292f425c39ca9f"
+    },
+    "ts": 1792121302.931332
+  },
+  {
+    "node_id": "repair-1",
+    "actor": "human:claude-on-behalf-of-kajalmahata",
+    "title": "change approved",
+    "rationale": "Delegated routine approval: all exit gates passed; reviewed summary.",
+    "alternatives": [],
+    "based_on": {
+      "subject": "bf9251c9cf809b1c"
+    },
+    "ts": 1792121685.957591
+  },
+  {
+    "node_id": "release_gate",
+    "actor": "human:kajalmahata",
+    "title": "release approved",
+    "rationale": "Release approved: all readiness checks passed; amendment scope delivered.",
+    "alternatives": [],
+    "based_on": {
+      "subject": "cf31a5b27b687a01"
+    },
+    "ts": 1792121926.298018
+  }
+]

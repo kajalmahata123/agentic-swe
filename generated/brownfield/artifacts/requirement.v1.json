@@ -1,0 +1,14 @@
+{
+  "name": "requirement",
+  "version": 1,
+  "hash": "d06fb782651601bf",
+  "producer": "intake",
+  "derived_from": {},
+  "value": {
+    "text": "Change request CR-142 for the existing URL shortener service:\n\n1. Custom aliases: when creating a link a client may choose its own short code\n   (3-32 characters, letters, digits, '-' and '_'). Reserved words (api, docs, redoc, healthz,\n   readyz, metrics, openapi.json) are rejected with 422; an alias that is already taken returns 409.\n2. Link expiration: creation accepts an optional `expires_at` (ISO-8601, must be in the future).\n   Redirecting an expired link returns 410 Gone; link metadata reports whether it is expired.\n\nBug report BUG-77 (from support): \"A link created with an upper-case scheme like HTTP://Example.com\nwas rejected, and we believe a `javascript:` URL was accepted once.\" Investigate the existing code,\nfix whatever is actually wrong, and add regression tests either way.\n\nConstraints: existing endpoints and response fields must keep working (backwards compatible);\nexisting tests must keep passing; the database schema change must be explicit in the design.",
+    "scenario": "brownfield",
+    "amendments": [],
+    "clarifications": {},
+    "clarification_rounds": 0
+  }
+}

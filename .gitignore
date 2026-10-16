@@ -20,3 +20,6 @@ runs/
 .demo-dash.pid
 .demo-audio-cache/
 .DS_Store
+
+# exported live runs are committed in full (including their console logs)
+!generated/**/console.log

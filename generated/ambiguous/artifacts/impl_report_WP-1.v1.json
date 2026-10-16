@@ -1,0 +1,32 @@
+{
+  "name": "impl_report:WP-1",
+  "version": 1,
+  "hash": "9319f4b8984e1758",
+  "producer": "impl:WP-1",
+  "derived_from": {
+    "requirements_spec": "177a1306cb37a92f",
+    "design": "4546f8f39faeb8aa"
+  },
+  "value": {
+    "summary": "I implemented WP-1, the foundation package. Compile and ruff checks pass, and the existing tests pass. The test suite and app/main.py were not changed, so nothing new is covered by tests yet. The new engine branches, the startup schema upgrade and the engine tuning log line have not been run by any test or by the app.\n\nWhat changed:\n- **Settings:** four new validated settings: `SQLITE_BUSY_TIMEOUT_MS` (0\u201360000, default 5000), `DB_POOL_SIZE` (\u22651, default 5), `DB_MAX_OVERFLOW` (\u22650, default 10) and `DB_POOL_TIMEOUT_SECONDS` (>0 and \u2264300, default 30). Existing settings are unchanged.\n- **Database engine:** in-memory SQLite gets only `check_same_thread=False`. File-based SQLite gets a sized connection pool, the busy timeout through the sqlite3 `timeout` argument, and a connect listener that turns on WAL and `synchronous=NORMAL` using fixed strings. Other databases get `pool_pre_ping` plus the pool settings. New helpers `describe_engine` and `log_engine_tuning` report the effective settings without the URL.\n- **Schema upgrade:** new `app/core/schema.py` with `ensure_links_expires_at(engine)`. It adds `links.expires_at` only if the column is missing (using the PostgreSQL column type on PostgreSQL), logs either \"added\" or \"already present\", and on failure logs an error and re-raises so startup aborts.\n- **Errors and logging:** added `InvalidInputError` (422) and `LINK_EXPIRED_DETAIL = 'Link has expired'`. The JSON log formatter now includes the tuning and schema-upgrade fields.\n- **Models:** new `to_naive_utc()` helper, exported from `app.models`. `Link` gains a nullable `expires_at` column. `links.code` uses the case-sensitive `utf8mb4_bin` collation on MySQL/MariaDB only, without dialect-specific imports.",
+    "files_changed": [
+      "app/core/config.py",
+      "app/core/db.py",
+      "app/core/schema.py",
+      "app/core/errors.py",
+      "app/core/logging.py",
+      "app/models/base.py",
+      "app/models/link.py",
+      "app/models/__init__.py"
+    ],
+    "notes": [
+      "Checks run: `python -m compileall -q app` and `ruff check app/core app/models` pass, and `python -m pytest -q` (existing suite) is green.",
+      "All SQL in core is fixed literal strings. The only formatted string is the tuning log message, which is not SQL. Core does not import app.api, app.services or app.repositories.",
+      "`create_engine` is called through the module-level name in `app.core.db`, so tests can monkeypatch it."
+    ],
+    "open_issues": [
+      "WP-6 (app/main.py) still has to pass the new settings into `create_db_engine` and, at startup, run `create_all`, then `ensure_links_expires_at(engine)`, then `log_engine_tuning(engine)`. Until then the hardened engine, the schema upgrade and the tuning log line are never used.",
+      "The test agent still has to remove `SQLITE_BUSY_TIMEOUT_MS`, `DB_POOL_SIZE`, `DB_MAX_OVERFLOW` and `DB_POOL_TIMEOUT_SECONDS` from the environment in tests/conftest.py, and extend the settings tests for the new defaults and invalid values."
+    ]
+  }
+}

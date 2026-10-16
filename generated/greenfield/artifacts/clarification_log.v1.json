@@ -1,0 +1,43 @@
+{
+  "name": "clarification_log",
+  "version": 1,
+  "hash": "d65a6ee3b313377b",
+  "producer": "clarify",
+  "derived_from": {
+    "requirements_spec": "f9e39c09ed667d11"
+  },
+  "value": {
+    "asked": [],
+    "defaults_assumed": [
+      {
+        "id": "Q-1",
+        "default": "No authentication in this iteration. The endpoints are designed so an API-key dependency can be added later on the /api router without changing the contract. Recorded as a risk."
+      },
+      {
+        "id": "Q-2",
+        "default": "410 Gone with a JSON 'detail' key."
+      },
+      {
+        "id": "Q-3",
+        "default": "Global scope, no expiry in this iteration. A replay with the same payload returns 201 and the identical body plus 'Idempotent-Replayed: true'. A different payload returns 409."
+      },
+      {
+        "id": "Q-4",
+        "default": "Not supported. Random codes only, no expiry."
+      },
+      {
+        "id": "Q-5",
+        "default": "Use the NFR-4 targets. Click recording is synchronous, in the same request."
+      },
+      {
+        "id": "Q-6",
+        "default": "Last 30 days by default (configurable with 'days'), top 10 referrers, and total_clicks counted all-time."
+      },
+      {
+        "id": "Q-7",
+        "default": "Use the socket peer address (request.client.host). Ignore X-Forwarded-For unless a future TRUSTED_PROXIES setting is added."
+      }
+    ],
+    "answered_before": {}
+  }
+}

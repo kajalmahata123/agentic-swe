@@ -1,0 +1,27 @@
+{
+  "name": "impl_report:WP-4",
+  "version": 1,
+  "hash": "4c3869ce016f7c30",
+  "producer": "impl:WP-4",
+  "derived_from": {
+    "requirements_spec": "177a1306cb37a92f",
+    "design": "4546f8f39faeb8aa"
+  },
+  "value": {
+    "summary": "I implemented WP-4 in the two service files. All 165 existing tests pass, `python -m compileall -q app` succeeds and `ruff check app tests` is clean. No new tests were written; those belong to the test agent.\n\n**`app/services/link_service.py`**\n- **Clock and expiry:** `LinkService` takes an optional `now` clock. `_utcnow()` uses it and otherwise falls back to the module-level `utcnow`, looked up at call time so monkeypatching still works, and returns naive UTC. A link is expired when now \u2265 `expires_at`.\n- **Redirects:** GET and HEAD both go through the same `_resolve_target` helper. Malformed codes return 404 without any SQL; otherwise the helper does one narrow `get_redirect_target` SELECT and calls `_check_redirectable`. That check returns 410 for a deactivated link first, then 410 `Link has expired`.\n- **Click recording:** `resolve_and_record_click` calls `session.rollback()` to end the read transaction before the click insert. A failed insert or commit is rolled back, any second rollback failure is suppressed, and exactly one WARNING is logged: `failed to record click for link_id=%s (%s)` with the exception class name only (no IP, message or traceback). The redirect still returns the URL.\n- **`create_link`** has a new `expires_at` parameter. It is normalised to naive UTC, the idempotency replay/conflict check runs before the must-be-in-the-future check, and the new link is stored with `expires_at`.\n- **Idempotency hash:** `_request_hash` is `sha256(url)` when there is no expiry, so keys stored before the deploy still replay. With an expiry it is `sha256(url + '\\n' + '%Y-%m-%dT%H:%M:%S.%fZ')`.\n- **Detail and PATCH:** `LinkDetail` has a new `is_expired` field, which `get_link_detail` fills in. The new `set_expiry` looks the link up first (404), validates the value is in the future (422), commits only the `expires_at` change and returns the refreshed detail.\n- **`deactivate`** now uses the injected clock.\n\n**`app/services/stats_service.py`**\n- `get_stats` keeps its signature and behaviour but now reads daily counts from `ClickRepository.daily_counts` (SQL `GROUP BY`) instead of counting in Python. The `Counter` import is gone.\n- New `HourlyStats`, `MAX_HOURLY_RANGE_HOURS = 744` and `DEFAULT_HOURLY_LOOKBACK_HOURS = 24`.\n- New `get_hourly_clicks` follows the WP steps (a) to (h) in order: both-or-neither check, UTC normalisation with OverflowError mapped to 422, default 25-hour window, start floored and end rounded up to the hour, start < end check, 744-hour cap, then the 404 check (works for deactivated and expired links), then zero-filled buckets and the total.",
+    "files_changed": [
+      "app/services/link_service.py",
+      "app/services/stats_service.py"
+    ],
+    "notes": [
+      "I added two small private helpers not named in the WP: `LinkService._require_future`, shared by create and PATCH, and `StatsService._get_link_or_404`, shared by daily and hourly stats.",
+      "The best-effort rollback uses `contextlib.suppress(Exception)` instead of `try/except: pass`, because ruff rule S110 flags the latter. It behaves the same.",
+      "Error texts: 'expires_at must be in the future', 'start and end must be supplied together', 'datetime out of range', 'start must be before end' and 'range must not exceed 744 hours'.",
+      "The services import nothing from fastapi, starlette or app.api."
+    ],
+    "open_issues": [
+      "WP-6 still has to do the wiring: pass `payload.expires_at` to `create_link`, add the PATCH route calling `set_expiry`, add the hourly route calling `get_hourly_clicks` and expose `LinkDetail.is_expired` in the detail response. `deps.get_link_service` stays as it is; the clock defaults to `utcnow`.",
+      "No tests yet for the new behaviour (expiry rule, best-effort click logging, hourly stats). The test agent covers these."
+    ]
+  }
+}

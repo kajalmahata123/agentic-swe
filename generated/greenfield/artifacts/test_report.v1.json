@@ -1,0 +1,223 @@
+{
+  "name": "test_report",
+  "version": 1,
+  "hash": "5c8c14dbc36e3257",
+  "producer": "tests",
+  "derived_from": {
+    "requirements_spec": "f9e39c09ed667d11",
+    "design": "69d249761c25951f"
+  },
+  "value": {
+    "summary": "I wrote a pytest suite of 156 tests across 8 modules plus a shared `conftest.py` and `helpers.py`. All tests pass with `python -m pytest -q`, line coverage of `app/` is 99% (590 statements, 5 missed), and `ruff check tests` is clean. I found no product defects.\n\n**Gate fix from attempt 1:** the tests no longer contain the forbidden literal pattern the policy scan flagged. The security check on product code now parses each file's syntax tree. It fails on any `eval`/`exec`/`compile`/`__import__` call, on any call that passes the keyword `shell` with a truthy literal, on any `subprocess` import and on any `random` import. It also checks that `text()` only ever receives a plain string literal. I re-searched `tests/` for the flagged patterns and found none.\n\n**Isolation:** before anything imports the app, `conftest.py` points `DATABASE_URL` at a temporary directory and clears the other config variables. Each test then gets its own app via `create_app(Settings(database_url=sqlite:///<tmp_path>/test-N.db, base_url='http://sho.rt'))`, inside a `with TestClient(...)` block so tables are created at startup.\n\n**What the tests cover:**\n- **Creation and validation:** the 201 body, the Location header, no implicit de-duplication, 422 for bad bodies, the 2048/2049-character boundary, a large set of rejected URL types, and no row saved when validation fails.\n- **Short codes:** the 7-character base62 format, the unique constraint (a duplicate insert raises `IntegrityError`), a forced collision that retries successfully, 503 after 5 collisions (and after a configured smaller limit), reserved words being discarded, and 1000 links getting 1000 unique codes.\n- **Idempotency:** replay with the `Idempotent-Replayed` header, 409 for the same key with a different URL, 400/422 for empty, blank or over-long keys, and a simulated concurrent race (the loser replays or gets 409, never 500).\n- **Redirects and clicks:** the exact 307 Location, `Cache-Control: no-store`, 404/410, HEAD, click counts, truncation of long headers, and a privacy scan of every stored column and all captured logs for the client address and a forwarded IP.\n- **Stats:** day bucketing on either side of UTC midnight, the `days` window, out-of-range values returning 422, referrer ordering, the limit of 10, and the null-referrer group.\n- **Probes, errors and logging:** readiness failure returning 503 with no exception text, a generic 500 whose traceback is logged server-side, and the request-log fields with no IP.\n- **Configuration, OpenAPI, architecture and performance:** settings and env vars, table and index checks, the documented paths and named schemas, a syntax-tree check that layers only import inward, pinned requirements, and a p95 latency test (marked slow) with 10,000 seeded links.\n\n**One test-side fix during the run:** TestClient's default User-Agent is also the string `testclient`, the same as its client address, so the privacy scan was matching the stored user agent. The privacy tests now send an explicit User-Agent.\n\n**Tests that could be flaky:**\n- The stats test that inserts clicks at real timestamps either side of midnight could fail if the run happens to cross UTC midnight.\n- The p95 latency test depends on how fast the machine is.",
+    "test_files": [
+      "tests/conftest.py",
+      "tests/helpers.py",
+      "tests/test_create_and_validation.py",
+      "tests/test_codes.py",
+      "tests/test_idempotency.py",
+      "tests/test_redirect_and_clicks.py",
+      "tests/test_lookup_and_deactivate.py",
+      "tests/test_stats.py",
+      "tests/test_health_and_errors.py",
+      "tests/test_config_openapi_architecture.py"
+    ],
+    "fr_coverage": {
+      "FR-1": [
+        "test_create_link_returns_201_with_metadata",
+        "test_create_link_sets_location_header",
+        "test_same_url_twice_without_key_creates_two_links",
+        "test_get_after_create_returns_same_metadata",
+        "test_url_is_stored_unchanged",
+        "test_invalid_body_returns_422",
+        "test_requests_without_key_unaffected_by_keyed_requests",
+        "test_short_url_uses_configured_base_url"
+      ],
+      "FR-2": [
+        "test_valid_urls_are_accepted",
+        "test_url_length_boundary",
+        "test_invalid_urls_return_422_and_persist_nothing",
+        "test_validate_target_url_unit",
+        "test_url_is_stored_unchanged"
+      ],
+      "FR-3": [
+        "test_generated_codes_match_base62_7_by_default",
+        "test_generate_code_unit_and_helpers",
+        "test_code_length_is_configurable",
+        "test_links_code_has_unique_constraint_and_duplicate_raises",
+        "test_forced_collision_retries_with_fresh_code",
+        "test_all_attempts_collide_returns_503_without_traceback",
+        "test_max_attempts_is_configurable",
+        "test_reserved_candidate_is_discarded",
+        "test_reserved_only_candidates_exhaust_to_503",
+        "test_1000_links_have_unique_codes",
+        "test_no_random_module_and_codes_use_secrets"
+      ],
+      "FR-4": [
+        "test_same_key_same_body_replays_identical_response",
+        "test_replay_header_only_on_replayed_response",
+        "test_same_key_different_url_returns_409",
+        "test_invalid_idempotency_key_rejected",
+        "test_idempotency_key_of_255_chars_accepted",
+        "test_different_keys_same_body_create_distinct_links",
+        "test_requests_without_key_unaffected_by_keyed_requests",
+        "test_replay_of_deactivated_link_returns_stored_state",
+        "test_concurrent_race_loser_replays_winner",
+        "test_concurrent_race_loser_with_different_payload_gets_409",
+        "test_race_with_unreadable_winner_returns_409_not_500",
+        "test_idempotency_row_links_to_created_link",
+        "test_idempotency_key_has_unique_constraint_and_duplicate_raises",
+        "test_same_url_twice_without_key_creates_two_links"
+      ],
+      "FR-5": [
+        "test_redirect_returns_307_with_exact_location",
+        "test_redirect_location_not_requoted",
+        "test_redirect_sets_no_store_cache_control",
+        "test_redirect_unknown_code_returns_404_json",
+        "test_redirect_malformed_code_returns_404",
+        "test_redirect_deactivated_returns_410_and_no_redirect",
+        "test_head_behaves_like_get_without_recording_click",
+        "test_delete_stops_redirects",
+        "test_probes_not_shadowed_by_redirect_route"
+      ],
+      "FR-6": [
+        "test_lookup_active_link_full_shape",
+        "test_lookup_total_clicks_counts_redirects",
+        "test_lookup_deactivated_link_still_returned",
+        "test_lookup_unknown_code_returns_404",
+        "test_lookup_malformed_code_returns_404_not_500",
+        "test_get_after_create_returns_same_metadata",
+        "test_redirect_malformed_code_returns_404"
+      ],
+      "FR-7": [
+        "test_delete_active_link_soft_deletes",
+        "test_delete_stops_redirects",
+        "test_delete_is_idempotent_and_keeps_deactivated_at",
+        "test_delete_unknown_returns_404",
+        "test_clicks_survive_deactivation_and_appear_in_stats",
+        "test_lookup_deactivated_link_still_returned",
+        "test_redirect_deactivated_returns_410_and_no_redirect"
+      ],
+      "FR-8": [
+        "test_n_redirects_create_n_click_events",
+        "test_click_event_stores_timestamp_referrer_and_user_agent",
+        "test_click_event_null_when_headers_absent",
+        "test_oversized_headers_are_truncated",
+        "test_404_and_410_do_not_create_click_events",
+        "test_click_events_have_no_raw_ip_column",
+        "test_ip_hash_null_without_salt_and_ip_never_stored",
+        "test_ip_hash_is_hmac_sha256_with_salt",
+        "test_blank_salt_means_no_hash",
+        "test_hash_ip_unit",
+        "test_click_recording_failure_still_redirects_and_logs",
+        "test_head_behaves_like_get_without_recording_click"
+      ],
+      "FR-9": [
+        "test_stats_shape_and_empty_link",
+        "test_stats_after_redirects",
+        "test_day_bucketing_across_utc_midnight",
+        "test_clicks_per_day_sorted_and_windowed",
+        "test_days_out_of_range_returns_422",
+        "test_top_referrers_ordering_and_null_grouping",
+        "test_top_referrers_limited_to_10",
+        "test_stats_available_for_deactivated_link",
+        "test_stats_unknown_code_returns_404",
+        "test_stats_counts_only_own_link",
+        "test_stats_service_with_fixed_now_buckets_by_utc_date",
+        "test_clicks_survive_deactivation_and_appear_in_stats"
+      ],
+      "FR-10": [
+        "test_healthz_ok_without_database",
+        "test_readyz_ok",
+        "test_readyz_db_failure_returns_503_without_exception_text",
+        "test_readyz_session_dependency_raising_returns_503",
+        "test_probes_not_shadowed_by_redirect_route",
+        "test_reserved_candidate_is_discarded"
+      ],
+      "FR-11": [
+        "test_error_statuses_are_json_with_detail",
+        "test_unknown_api_routes_return_404_json",
+        "test_unhandled_exception_in_route_returns_generic_500",
+        "test_unhandled_exception_in_service_returns_generic_500",
+        "test_database_error_in_route_returns_503",
+        "test_readyz_db_failure_returns_503_without_exception_text",
+        "test_invalid_body_returns_422",
+        "test_all_attempts_collide_returns_503_without_traceback",
+        "test_lookup_malformed_code_returns_404_not_500"
+      ],
+      "FR-12": [
+        "test_tables_created_at_startup_with_temp_sqlite",
+        "test_indexes_and_unique_constraints_exist",
+        "test_short_url_uses_configured_base_url",
+        "test_settings_defaults_and_env",
+        "test_settings_reject_invalid_values",
+        "test_env_configured_app_serves_requests",
+        "test_main_exposes_create_app_and_module_app",
+        "test_orm_uses_declarative_base_and_portable_types",
+        "test_code_length_is_configurable",
+        "test_max_attempts_is_configurable",
+        "test_configure_logging_is_idempotent_and_sets_level"
+      ],
+      "FR-13": [
+        "test_openapi_lists_endpoints_and_named_schemas"
+      ],
+      "NFR-1": [
+        "test_ip_hash_null_without_salt_and_ip_never_stored",
+        "test_ip_hash_is_hmac_sha256_with_salt",
+        "test_click_events_have_no_raw_ip_column",
+        "test_request_log_line_has_method_path_status_duration",
+        "test_hash_ip_unit",
+        "test_blank_salt_means_no_hash"
+      ],
+      "NFR-2": [
+        "test_invalid_urls_return_422_and_persist_nothing",
+        "test_no_random_module_and_codes_use_secrets",
+        "test_no_dynamic_code_execution_or_shell_subprocess",
+        "test_sql_text_only_receives_literal_strings",
+        "test_generate_code_unit_and_helpers"
+      ],
+      "NFR-3": [
+        "test_unhandled_exception_in_route_returns_generic_500",
+        "test_unhandled_exception_in_service_returns_generic_500",
+        "test_readyz_db_failure_returns_503_without_exception_text",
+        "test_readyz_session_dependency_raising_returns_503",
+        "test_database_error_in_route_returns_503",
+        "test_all_attempts_collide_returns_503_without_traceback"
+      ],
+      "NFR-4": [
+        "test_performance_p95_redirect_and_create",
+        "test_indexes_and_unique_constraints_exist"
+      ],
+      "NFR-5": [
+        "test_links_code_has_unique_constraint_and_duplicate_raises",
+        "test_idempotency_key_has_unique_constraint_and_duplicate_raises",
+        "test_forced_collision_retries_with_fresh_code",
+        "test_concurrent_race_loser_replays_winner",
+        "test_race_with_unreadable_winner_returns_409_not_500",
+        "test_indexes_and_unique_constraints_exist"
+      ],
+      "NFR-6": [
+        "test_layered_architecture_dependencies_point_inward"
+      ],
+      "NFR-8": [
+        "test_request_log_line_has_method_path_status_duration",
+        "test_json_formatter_emits_single_json_line",
+        "test_configure_logging_is_idempotent_and_sets_level",
+        "test_healthz_ok_without_database"
+      ],
+      "NFR-9": [
+        "test_no_module_level_settings_or_caches_and_pinned_requirements",
+        "test_main_exposes_create_app_and_module_app"
+      ]
+    },
+    "defects_found": [],
+    "pytest": {
+      "code": 0,
+      "passed": 156,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "coverage": 99.15,
+      "output": "........................................................................ [ 46%]\n........................................................................ [ 92%]\n............                                                             [100%]\n================================ tests coverage ================================\n_______________ coverage: platform darwin, python 3.11.9-final-0 _______________\n\nCoverage JSON written to file coverage.json\n156 passed in 25.59s"
+    }
+  }
+}

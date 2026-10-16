@@ -1,0 +1,371 @@
+{
+  "name": "requirements_spec",
+  "version": 1,
+  "hash": "d0ec50b9c24bbd54",
+  "producer": "requirements",
+  "derived_from": {
+    "requirement": "fa2ff180ed44200d",
+    "codebase_impact": "fcd1ac8fa2687297"
+  },
+  "value": {
+    "title": "Campaign readiness: faster, more reliable redirects, trustworthy probes, stats and docs for the URL shortener",
+    "problem_statement": "Next week marketing launches a billboard and TV campaign that puts our short links in front of the public. That means sudden traffic spikes on the public redirect path (GET/HEAD /{code}), plus external uptime monitoring. The current service has defects that make it slow or untrustworthy under that load. (1) On SQLite, redirect lookups block behind click and create commits: there is no WAL, the busy timeout is the default 5 s, and a lookup error becomes 503. The runbook wrongly says redirects still return 307 in this case. (2) The connection pool is fixed at 5+10 with a 30 s checkout timeout and cannot be configured. (3) HEAD /healthz and HEAD /readyz are caught by the catch-all HEAD /{code} route and return 404 'Link not found', so HEAD-based monitors will report an outage. (4) Stats memory and time grow with every click, so a campaign-scale link could make the endpoint very slow or exhaust worker memory. (5) On MySQL, case-sensitive codes are matched case-insensitively. (6) The docs contradict the code on authentication and leave out API_KEY. This change makes the redirect path faster and resistant to write contention, makes database tuning configurable, makes the probes and analytics trustworthy, and corrects the docs. Every existing contract must stay intact: the 307 with the exact Location and no-store, immediate 410 after deactivation, synchronous click counting, privacy, and architecture rules. The deadline is one week, so the scope deliberately favours small, low-risk changes at the database and engine level over caching, asynchronous ingestion or schema changes. New requirement ids continue from the existing FR-1..FR-13 and NFR-1..NFR-9, which the current test suite already references.",
+    "functional": [
+      {
+        "id": "FR-14",
+        "title": "HEAD support on liveness and readiness probes",
+        "description": "/healthz and /readyz must answer HEAD requests themselves rather than falling through to the catch-all HEAD /{code} redirect route. Fixes the existing defect where HEAD /healthz and HEAD /readyz return 404 'Link not found'.",
+        "acceptance_criteria": [
+          "HEAD /healthz returns 200 with an empty body and does not touch the database: the app uses a session factory that raises on use, and the request still returns 200.",
+          "HEAD /readyz returns 200 with an empty body when SELECT 1 succeeds.",
+          "HEAD /readyz returns 503 when the readiness DB check fails. The status comes from the readiness check, not from a link lookup, and the response contains no exception text, SQL or stack trace.",
+          "No links-table lookup runs for HEAD /healthz or HEAD /readyz (verified by counting SQL statements or by spying on LinkRepository).",
+          "GET /healthz and GET /readyz keep their current status codes and JSON bodies.",
+          "POST /healthz and POST /readyz still return 405.",
+          "HEAD /{code} for any other code is unchanged: 307 with the exact Location and Cache-Control: no-store for active links, 404 JSON for unknown or malformed codes, 410 JSON with no Location for deactivated links, and no click recorded.",
+          "The redirect router is still included last. The set of OpenAPI paths and named schemas is unchanged, and HEAD /{code} is still excluded from the schema."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-15",
+        "title": "Redirects resilient to database write contention",
+        "description": "A held write lock or a failed click write must not stall or fail the public redirect beyond a bounded, configurable time. For file-based SQLite, every new connection enables WAL journal mode, synchronous=NORMAL and a configurable busy_timeout, so readers do not block behind click or create commits. Click recording stays synchronous and best-effort: if the click INSERT or COMMIT fails or times out, the transaction is rolled back, a log line without any IP is written, and the visitor still gets the 307.",
+        "acceptance_criteria": [
+          "New setting SQLITE_BUSY_TIMEOUT_MS: an integer from 0 to 60000, default 5000 (matching the current pysqlite behaviour). Values outside the range fail settings validation at startup with a clear error.",
+          "For a file-based SQLite DATABASE_URL, a connection taken from the engine reports PRAGMA journal_mode = 'wal', PRAGMA synchronous = 1 (NORMAL), and PRAGMA busy_timeout equal to SQLITE_BUSY_TIMEOUT_MS.",
+          "For in-memory SQLite URLs ('sqlite://', ':memory:'), the app starts and serves requests without error. WAL is not applied or is tolerated.",
+          "Non-SQLite engines get no SQLite pragmas and keep pool_pre_ping=True. SQLite keeps check_same_thread=False.",
+          "With a temp file database, SQLITE_BUSY_TIMEOUT_MS=200, and a second connection holding a write lock (BEGIN IMMEDIATE with an uncommitted insert), GET /{code} for an active link returns 307 with the exact Location within 200 ms + 500 ms. No click is persisted for that request, and one warning log line without the IP is emitted.",
+          "Under the same held write lock, HEAD /{code} returns 307 and GET /{code} for a deactivated link returns 410. The lookup is not blocked because of WAL.",
+          "When no lock is held, exactly one click_event is persisted per successful GET, and total_clicks reflects it immediately after the response (synchronous visibility is preserved).",
+          "If the link lookup itself cannot run because the database is unavailable, the redirect returns 503 JSON {\"detail\": ...} with no internal details. docs/OPERATIONS.md describes this accurately and no longer claims redirects always return 307 under 'database is locked'."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-16",
+        "title": "Configurable database connection pool",
+        "description": "Pool sizing must be configurable through validated settings so operators can size the pool for campaign load. Defaults reproduce today's SQLAlchemy behaviour.",
+        "acceptance_criteria": [
+          "New settings: DB_POOL_SIZE (integer \u22651, default 5), DB_MAX_OVERFLOW (integer \u22650, default 10), DB_POOL_TIMEOUT_SECONDS (number >0 and \u2264300, default 30).",
+          "An invalid value (for example DB_POOL_SIZE=0, DB_MAX_OVERFLOW=-1 or DB_POOL_TIMEOUT_SECONDS=0) fails settings validation with a clear error and the app does not start.",
+          "For non-SQLite URLs and file-based SQLite (QueuePool), engine.pool.size() equals DB_POOL_SIZE, and the pool's overflow and timeout match the settings.",
+          "In-memory SQLite URLs ignore the pool settings without error.",
+          "Existing settings defaults remain unchanged; test_settings_defaults_and_env is extended, not weakened.",
+          "The engine and pool are still created per app inside create_app (on app.state). No module-level engine, settings or pool exists."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-17",
+        "title": "Lean redirect query budget",
+        "description": "The redirect hot path must perform the minimum database work: a narrow lookup of the columns it needs (id, url, is_active) by code, plus a click insert for GET only.",
+        "acceptance_criteria": [
+          "A successful GET /{code} issues exactly one SELECT on links (selecting only the needed columns), one INSERT into click_events and one COMMIT, verified by a SQLAlchemy before_cursor_execute event counter.",
+          "HEAD /{code} issues exactly one SELECT and no INSERT.",
+          "A malformed code (failing ^[A-Za-z0-9]{1,32}$) issues no SQL and returns 404 JSON.",
+          "A lookup of an unknown or deactivated code issues one SELECT and no INSERT.",
+          "The Location header stays byte-identical to the stored URL (no re-quoting)."
+        ],
+        "priority": "should"
+      },
+      {
+        "id": "FR-18",
+        "title": "Bounded-memory stats aggregation",
+        "description": "GET /api/links/{code}/stats must not load one Python object per click. Daily buckets must be aggregated in SQL, or streamed with constant memory, so memory is proportional to the number of days, not the number of clicks. Response semantics are unchanged.",
+        "acceptance_criteria": [
+          "The repository no longer returns a list of per-click timestamps. The stats path holds at most one row per day in the window plus at most one row per distinct referrer group in memory at once (or streams with yield_per), verified by a unit test on the repository's return shape.",
+          "Semantics are unchanged: UTC-day bucketing, including clicks on either side of UTC midnight; the window days=1..365 includes today; empty days are omitted; days are in ascending order; totals are all-time; referrers are ordered by count desc, then referrer asc, with NULL last on ties; top 10; missing or empty referrers are grouped as NULL; days outside 1..365 give 422 (or the existing error contract).",
+          "All existing tests in tests/test_stats.py pass unmodified, including test_day_bucketing_across_utc_midnight and the fixed-now service test.",
+          "Any dialect-specific date expression is guarded per dialect (SQLite, PostgreSQL, MySQL). The SQL compiles for all three dialects in a test that needs no external driver connection.",
+          "With 200,000 clicks seeded on one link in a temp SQLite file, GET /stats?days=365 returns 200 in under 2 s, and the tracemalloc peak during the call is no more than 2\u00d7 the peak measured with 2,000 clicks (marked slow)."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-19",
+        "title": "Case-sensitive short-code matching on MySQL",
+        "description": "Short codes are case-sensitive base62. On MySQL, the links.code column must use a binary or case-sensitive collation for fresh databases, and the docs must give the manual DDL for existing deployments.",
+        "acceptance_criteria": [
+          "CreateTable(Link.__table__) compiled with the MySQL dialect declares links.code with a case-sensitive or binary collation (for example utf8mb4_bin).",
+          "The compiled DDL for SQLite and PostgreSQL is unchanged compared with before.",
+          "docs/OPERATIONS.md contains the exact ALTER TABLE statement for existing MySQL databases and explains why it is needed.",
+          "On SQLite, /AbC1234 and /abc1234 still resolve independently (existing behaviour preserved)."
+        ],
+        "priority": "should"
+      },
+      {
+        "id": "FR-20",
+        "title": "Accurate documentation and changelog",
+        "description": "README.md, docs/API.md, docs/OPERATIONS.md and CHANGELOG.md must match the code: API-key authentication, new settings, HEAD probes, SQLite WAL and backups, lock behaviour, and campaign capacity guidance.",
+        "acceptance_criteria": [
+          "No doc says there is no authentication. README, API.md and OPERATIONS.md describe the X-API-Key header on /api/links*, the 401 response, fail-closed behaviour when API_KEY is unset, and the 16-character minimum.",
+          "The README configuration table lists every Settings env var (verified by a test that iterates over Settings fields and checks that each env name appears in README.md), including API_KEY, SQLITE_BUSY_TIMEOUT_MS, DB_POOL_SIZE, DB_MAX_OVERFLOW and DB_POOL_TIMEOUT_SECONDS.",
+          "docs/API.md documents HEAD on /healthz and /readyz and lists 401 in the error table.",
+          "docs/OPERATIONS.md documents WAL and its -wal/-shm side files, the backup procedure (sqlite3 .backup, or copying all three files while the service is stopped), the fact that WAL does not work on network filesystems, the corrected locking runbook, pool sizing guidance, and a clear statement that campaign-scale traffic or multiple workers/replicas should use PostgreSQL/MySQL with a tuned pool, because SQLite stays single-writer.",
+          "CHANGELOG.md [Unreleased] records API-key authentication, HEAD probe support, the WAL/busy_timeout and pool settings, the stats aggregation change and the MySQL collation note."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-21",
+        "title": "Regression protection of existing contracts",
+        "description": "All existing behaviour covered by FR-1..FR-13 and NFR-1..NFR-9 must be preserved, especially on the paths this change touches.",
+        "acceptance_criteria": [
+          "All 165 existing tests pass. Existing assertions are not loosened; tests may only be extended.",
+          "Redirect contract (FR-5): 307, Location byte-identical to the stored URL, Cache-Control: no-store; 404 JSON for unknown or malformed codes; 410 JSON with no Location for deactivated links.",
+          "Immediate deactivation (FR-7): the first GET or HEAD /{code} after DELETE /api/links/{code} returns 410.",
+          "Click recording (FR-8): exactly one click per successful GET; none for HEAD, 404 or 410; referrer truncated to 2048 and UA to 512; counts visible immediately.",
+          "Auth: /api/links* requires X-API-Key; redirects and probes stay public.",
+          "Idempotency and code allocation (FR-3, FR-4): uniqueness, collision retry, 503 on exhaustion and race handling all still pass on a temp SQLite file with WAL enabled.",
+          "Error contract (FR-11, NFR-3): JSON {detail} everywhere; SQLAlchemyError becomes 503; unknown errors become a generic 500; nothing is leaked."
+        ],
+        "priority": "must"
+      }
+    ],
+    "non_functional": [
+      {
+        "id": "NFR-10",
+        "category": "performance",
+        "requirement": "Under concurrent mixed load on a temp file SQLite database with WAL, redirects must not error and must stay fast. Load: 16 client threads, 2,000 requests in total, 95% GET /{code} spread over 1,000 seeded links and 5% POST /api/links. Expected: zero 5xx responses, redirect p95 < 250 ms in CI, and click_event rows equal to successful GETs minus any logged best-effort click failures (expected 0). The production target is set by Q-1.",
+        "measure": "New tests/test_perf_concurrency.py, marked slow, using a ThreadPoolExecutor and TestClient against a temp file DB. It asserts the status distribution, the p95 and the click count."
+      },
+      {
+        "id": "NFR-11",
+        "category": "performance",
+        "requirement": "The existing single-threaded budget (NFR-4) must not regress: redirect p95 < 50 ms and create p95 < 100 ms on 10k seeded links.",
+        "measure": "The existing test_performance_p95_redirect_and_create passes with its thresholds unchanged."
+      },
+      {
+        "id": "NFR-12",
+        "category": "reliability",
+        "requirement": "A failure or lock timeout during click recording must never turn a resolvable redirect into a non-307 response. With a lock held, worst-case added latency is bounded by SQLITE_BUSY_TIMEOUT_MS + 500 ms.",
+        "measure": "Lock-holding tests in FR-15. A fault-injection test makes the click INSERT or COMMIT raise OperationalError and asserts 307, a rollback, and a log line without the IP."
+      },
+      {
+        "id": "NFR-13",
+        "category": "scalability",
+        "requirement": "Stats memory must be O(days + referrer groups), not O(clicks).",
+        "measure": "The tracemalloc comparison test in FR-18 (200k vs 2k clicks, peak at most 2\u00d7) and the repository return-shape test."
+      },
+      {
+        "id": "NFR-14",
+        "category": "privacy",
+        "requirement": "NFR-1 is preserved: no raw IP is stored or logged anywhere, including the new click-failure warning logs, startup configuration logs and any error paths. ip_hash stays HMAC-SHA256 and is set only when IP_HASH_SALT is configured.",
+        "measure": "The existing privacy tests, plus a caplog test on the click-failure and lock paths asserting that the client IP string and X-Forwarded-For values are absent."
+      },
+      {
+        "id": "NFR-15",
+        "category": "security",
+        "requirement": "No security regressions: /healthz never touches the DB; probe and redirect errors leak no exception text; Cache-Control: no-store stays on redirects; no response caching or CDN headers are added; the API-key check stays constant-time and fails closed; no secrets appear in logs, including DB URLs with credentials.",
+        "measure": "Existing auth, health and error tests, plus the new HEAD probe tests. Static checks for eval/exec/subprocess, and text() only with literals. A caplog test confirms the startup log does not include the DATABASE_URL password or API_KEY."
+      },
+      {
+        "id": "NFR-16",
+        "category": "operability",
+        "requirement": "At startup the app logs one structured line with the effective DB tuning: backend dialect, pool size, overflow, timeout, and for SQLite the journal_mode and busy_timeout. No credentials. Operators can then confirm campaign configuration from the logs.",
+        "measure": "A caplog test on create_app with a TestClient lifespan asserts the fields are present and the secrets absent."
+      },
+      {
+        "id": "NFR-17",
+        "category": "maintainability",
+        "requirement": "Architecture and static rules hold: layering points inward, services import no FastAPI or Starlette, core imports no api, services or repositories, there are no lru_cache/cache names and no module-level caches, any new settings are validated in app/core/config.py, requirements are pinned with == and no new runtime dependencies are added. Test coverage stays at or above 99%. Every new test docstring names the FR/NFR ids it covers.",
+        "measure": "The existing AST and static architecture tests (NFR-2, NFR-6, NFR-9) pass; pytest --cov reports \u2265 99%; reviewers check requirements.txt has no new entries."
+      },
+      {
+        "id": "NFR-18",
+        "category": "reliability",
+        "requirement": "No schema changes to existing tables (links, click_events, idempotency_keys) beyond the MySQL collation declaration, which only affects fresh MySQL databases and has documented DDL for existing ones. Deployed databases keep working with no manual steps on SQLite and PostgreSQL.",
+        "measure": "A test compiles CreateTable for SQLite and PostgreSQL and compares it with a baseline snapshot. An app started against a database file created by the previous version serves redirects and stats successfully."
+      }
+    ],
+    "ambiguities": [
+      {
+        "id": "Q-1",
+        "question": "What are the measurable campaign targets: expected peak redirect requests per second or concurrent visitors, the redirect latency target (p95/p99), and the availability goal during the campaign window?",
+        "why": "The target decides the architecture. Modest load can be met with the WAL/pool/lean-query changes in this spec. Medium load requires a PostgreSQL deployment and driver. Large load needs caching and asynchronous click ingestion, which conflict with immediate deactivation and synchronous counts and cannot be delivered safely in one week.",
+        "options": [
+          "Modest: up to about 50 RPS, p95 < 100 ms, best effort (one instance is enough)",
+          "Medium: about 500 RPS, p95 < 100 ms, 99.9% availability (needs PostgreSQL and several workers)",
+          "Large: several thousand RPS or TV-spike bursts (needs PostgreSQL, multiple replicas, possibly an edge cache and an asynchronous click pipeline)"
+        ],
+        "default": "Modest-to-medium load on a single deployment. The CI acceptance bar is NFR-10 (16 concurrent clients, zero 5xx, p95 < 250 ms), and production sizing is documented as guidance, not guaranteed.",
+        "blocking": true,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-2",
+        "question": "Which database and topology will serve the campaign in production: SQLite on one instance, or PostgreSQL/MySQL with several workers or replicas? If PostgreSQL, should we pin a driver (e.g. psycopg) in requirements.txt?",
+        "why": "SQLite stays single-writer even with WAL, so the click write per visit limits throughput. If production is PostgreSQL or MySQL, we must add and pin a driver, validate the pool defaults for it, and FR-19's collation fix becomes urgent. A multi-instance topology also rules out any in-process cache.",
+        "options": [
+          "SQLite, one instance, one worker",
+          "SQLite with several workers (not recommended)",
+          "PostgreSQL with several workers/replicas, and a pinned driver added",
+          "MySQL with several workers/replicas, and a pinned driver added"
+        ],
+        "default": "Keep whatever backend is deployed today, add no driver, make SQLite as robust as possible (WAL, busy_timeout), make the pool configurable, and document that campaign-scale or multi-worker deployments should move to PostgreSQL.",
+        "blocking": true,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-3",
+        "question": "What does 'more trustworthy' mean to marketing: reliable redirects and monitoring, accurate click analytics, safe links (protection against phishing and malicious destinations), or easy-to-type and recognisable links (vanity aliases, codes without confusable characters, a branded domain)?",
+        "why": "Each of the extra options is a separate product feature with its own API, data and test changes. They add to this spec rather than conflict with it, but they compete for the one-week window.",
+        "options": [
+          "Reliability, monitoring, accurate analytics and correct docs (this spec)",
+          "Plus link safety: destination allow/deny lists or malware scanning",
+          "Plus human-friendly links: vanity aliases or an alphabet without confusable characters for new codes",
+          "Plus a human-friendly HTML 404/410 page for browsers"
+        ],
+        "default": "Interpret trustworthy as: redirects that keep working under load, probes that tell the truth, bounded and accurate stats, case-correct matching on all backends, and docs that match the code. The other options are out of scope for this release.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-4",
+        "question": "May we cache redirect lookups in process to gain speed, accepting a staleness window after deactivation?",
+        "why": "A cache conflicts with the immediate-410 contract (FR-7), which matters for phishing takedowns during a public campaign, and does not invalidate across workers or replicas.",
+        "options": [
+          "No cache (deactivation is always immediate)",
+          "Per-app cache with a short TTL, invalidated on DELETE in the same process; stale for up to the TTL on other workers or replicas",
+          "Shared cache (e.g. Redis), with a new dependency and infrastructure"
+        ],
+        "default": "No redirect cache in this release. Performance comes from WAL, the narrow lookup and pool sizing.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-5",
+        "question": "Should click recording move off the request path (background task, batching, queue) to reduce latency?",
+        "why": "An asynchronous design changes the click-count visibility contract and existing tests, and risks losing clicks or leaking IPs in buffers.",
+        "options": [
+          "Keep it synchronous and best-effort (counts visible immediately)",
+          "Asynchronous or batched, with a flush on shutdown (possible loss on crash; counts eventually consistent)"
+        ],
+        "default": "Keep it synchronous and best-effort, with lock waits bounded by SQLITE_BUSY_TIMEOUT_MS.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-6",
+        "question": "Should clicks from link-preview bots and crawlers be excluded from or flagged in the campaign analytics?",
+        "why": "Social and messaging link previews inflate counts. Flagging needs a schema change to click_events, which create_all will not apply to deployed databases.",
+        "options": [
+          "Count all GETs (current behaviour)",
+          "Flag bots using a User-Agent heuristic (needs a new column and a migration)",
+          "Exclude bots from counts"
+        ],
+        "default": "Keep the current counting semantics. Document that counts include automated GETs.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-7",
+        "question": "Under a held write lock, should the redirect give up on the click quickly (drop it) or wait longer to record it?",
+        "why": "This decides the default for SQLITE_BUSY_TIMEOUT_MS and the trade-off between visitor latency and analytics completeness.",
+        "options": [
+          "Short wait, e.g. 200\u20131000 ms (faster redirect, may drop clicks under contention)",
+          "Current 5000 ms default (fewer dropped clicks, slower redirects under contention)"
+        ],
+        "default": "Default 5000 ms, which preserves current behaviour, configurable. OPERATIONS.md recommends 1000 ms for campaign traffic on SQLite.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-8",
+        "question": "Is MySQL actually used anywhere, and are operators able to run the documented ALTER TABLE on existing MySQL databases before the campaign?",
+        "why": "Changing the model only affects fresh databases. Existing MySQL deployments keep case-insensitive matching until the manual DDL is run.",
+        "options": [
+          "Not used: declare the model collation and document the DDL only",
+          "Used: the DDL must be run as a deployment step before launch"
+        ],
+        "default": "Declare the binary collation in the model and document the DDL. No automatic migration.",
+        "blocking": false,
+        "resolved_by": null
+      }
+    ],
+    "assumptions": [
+      "New requirement ids continue from the existing FR-1..FR-13 and NFR-1..NFR-9, which the current tests reference. Those existing requirements stay in force and are protected by FR-21.",
+      "Errors stay JSON-only ({\"detail\": ...}). No HTML error pages are introduced.",
+      "There is no migration tooling. Schema changes to existing tables are avoided, except the MySQL collation declaration (FR-19), which only affects fresh databases and is accompanied by documented DDL.",
+      "WAL and the other pragmas are applied through a SQLAlchemy connect event, and only for file-based SQLite.",
+      "Engine, pool and settings stay per app (created in create_app and stored on app.state), so tests stay isolated.",
+      "No new runtime dependencies are added, and no network calls are made to third-party services. This rules out link-safety scanning against external reputation services.",
+      "Concurrency and large-volume tests are marked slow and use generous thresholds so CI does not become flaky. The existing NFR-4 thresholds are unchanged.",
+      "The stats endpoint keeps its current window and validation contract (days 1..365) and its response schema.",
+      "Load-balancer and CDN configuration in front of the service is managed outside this codebase."
+    ],
+    "out_of_scope": [
+      "Redirect response caching (in process, shared, CDN or browser). Cache-Control: no-store is kept.",
+      "Asynchronous, batched or queued click ingestion.",
+      "Bot or crawler detection and filtering of clicks.",
+      "Vanity or custom aliases, branded domains, and changes to the code alphabet for new codes.",
+      "HTML landing or error pages for browsers.",
+      "Rate limiting and DDoS protection (handled at the gateway or edge).",
+      "Link-safety scanning or destination reputation checks.",
+      "Migration tooling, denormalised click counters, and new indexes on existing tables.",
+      "Adding a PostgreSQL or MySQL driver to requirements.txt (unless Q-2 resolves that way).",
+      "Changing expire_on_commit or removing the extra refresh SELECT after create.",
+      "Multi-region or high-availability infrastructure work."
+    ],
+    "risks": [
+      {
+        "id": "RK-1",
+        "description": "The targets are unquantified (Q-1, Q-2). The delivered DB-level improvements may fall short of real TV-spike traffic, especially on SQLite with one write per click.",
+        "likelihood": "high",
+        "impact": "high",
+        "mitigation": "Escalate Q-1 and Q-2 to the product owner now as blocking. Ship the low-risk improvements in any case. Document clearly in OPERATIONS.md that campaign scale needs PostgreSQL and pool sizing, and keep NFR-10 as the measurable CI bar."
+      },
+      {
+        "id": "RK-2",
+        "description": "Enabling WAL changes the on-disk files and the backup procedure, fails on network filesystems, and may not apply to in-memory test databases.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Apply WAL only to file-based SQLite and tolerate in-memory URLs. Add a pragma verification test. Update the backup and runbook sections in OPERATIONS.md (FR-20)."
+      },
+      {
+        "id": "RK-3",
+        "description": "Rewriting stats as SQL aggregation could subtly change UTC-day bucketing or window edges across dialects.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Keep the existing stats tests unmodified as the equivalence oracle. Guard dialect-specific expressions and test that they compile for SQLite, PostgreSQL and MySQL. Streaming with yield_per is an acceptable fallback."
+      },
+      {
+        "id": "RK-4",
+        "description": "Changing probe routing to support HEAD could disturb the catch-all order, the OpenAPI paths or the 405 behaviour, or make /healthz touch the DB.",
+        "likelihood": "low",
+        "impact": "medium",
+        "mitigation": "Use api_route(methods=['GET','HEAD']) on the probes, keep the redirect router last, and add assertions for the 405, for no DB access, for unchanged HEAD /{code} behaviour and for the OpenAPI path set (FR-14)."
+      },
+      {
+        "id": "RK-5",
+        "description": "Short busy timeouts drop clicks under contention, which hurts analytics completeness during the campaign.",
+        "likelihood": "medium",
+        "impact": "low",
+        "mitigation": "Make the timeout configurable (Q-7), log each dropped click without the IP so drops can be counted, and document the trade-off."
+      },
+      {
+        "id": "RK-6",
+        "description": "The concurrent load test could be flaky on slow CI runners.",
+        "likelihood": "medium",
+        "impact": "low",
+        "mitigation": "Mark it slow, use generous latency thresholds, and treat the zero-5xx check as the primary assertion."
+      },
+      {
+        "id": "RK-7",
+        "description": "The MySQL collation fix does not reach existing deployments without the manual DDL, so behaviour stays inconsistent.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Document the exact ALTER TABLE in OPERATIONS.md and the CHANGELOG, and confirm MySQL usage through Q-8."
+      },
+      {
+        "id": "RK-8",
+        "description": "The one-week deadline leaves little room for review and staged rollout before a high-visibility launch.",
+        "likelihood": "high",
+        "impact": "high",
+        "mitigation": "Prioritise the must items (FR-14, FR-15, FR-16, FR-18, FR-20, FR-21) and defer the should items if time runs short. Run the concurrency test against a production-like configuration before launch, and keep every change behind defaults that preserve current behaviour."
+      }
+    ]
+  }
+}

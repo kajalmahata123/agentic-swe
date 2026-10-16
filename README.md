@@ -21,6 +21,8 @@ released** service, demonstrated by having it build and evolve a **URL shortener
   artifact lineage, decision records, reliability metrics (success rate, retries, rollbacks,
   MTTR, latency, cost) and a generated engineering summary per run.
 
+> 📂 **Browse what the agents generated: [`generated/`](generated/)** ([greenfield](generated/greenfield/) · [brownfield](generated/brownfield/) · [ambiguous](generated/ambiguous/)).
+>
 > The URL shortener is **not hand-written**. It is the *output* of the orchestrator. The
 > repository contains the system that produces it. Run outputs (code, tests, docs, release
 > bundle) land in `.sdlc/runs/<run_id>/`.
@@ -56,7 +58,7 @@ each line is time-aligned to its scene. Regenerate with `make demo-video` (silen
 | [docs/SCENARIOS.md](docs/SCENARIOS.md) | Greenfield, brownfield and ambiguous scenarios: decomposition, orchestration, validation, evidence |
 | [docs/TESTING.md](docs/TESTING.md) | Testing approach, limitations and trade-offs |
 | [docs/ENGINEERING_SUMMARY.md](docs/ENGINEERING_SUMMARY.md) | Final engineering summary: plan & rationale, artifacts, risks, validation, assumptions, limitations |
-| [examples/greenfield-url-shortener](examples/greenfield-url-shortener/) | **The service the agents generated** in the live greenfield run (v1.0.0, 165 tests, 99% coverage) + provenance (engineering summary, release manifest, git history) |
+| **[generated/](generated/)** | **What the agents actually produced** in the three live runs, as browsable files: the generated code, every artifact (requirements, design, plans, reports), agent transcripts, approvals, the audit log, git history, releases and console logs |
 | [docs/REQUIREMENTS_MAP.md](docs/REQUIREMENTS_MAP.md) | Each assignment requirement → where and how it is implemented |
 
 ## Setup

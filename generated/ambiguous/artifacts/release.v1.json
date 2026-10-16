@@ -1,0 +1,16 @@
+{
+  "name": "release",
+  "version": 1,
+  "hash": "c20df46a13d00354",
+  "producer": "publish",
+  "derived_from": {
+    "release_readiness": "aee01a63efd5c6fd"
+  },
+  "value": {
+    "tag": "v1.2.0",
+    "commit": "54020f9cc58e16118bfaab4e63fa7493f6a2e119",
+    "bundle": "/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.sdlc/runs/run_9f7e81be929b/release/v1.2.0/service-v1.2.0.tar.gz",
+    "sha256": "651fc9b1ff44e5aa439bb30343e7d1e0e03ee4218d2be4c8df50be7ca25f9e8d",
+    "dir": "/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.sdlc/runs/run_9f7e81be929b/release/v1.2.0"
+  }
+}

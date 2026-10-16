@@ -1,0 +1,345 @@
+{
+  "name": "codebase_impact",
+  "version": 1,
+  "hash": "fcd1ac8fa2687297",
+  "producer": "impact_analysis",
+  "derived_from": {
+    "requirement": "fa2ff180ed44200d",
+    "codebase_index": "274d0ad173e248d2"
+  },
+  "value": {
+    "summary": "Brownfield URL shortener (FastAPI + SQLAlchemy 2.0 sync, SQLite default). Baseline: 165 tests passing, 99.19% coverage. The brief ('faster and more trustworthy before a billboard/TV campaign') is vague. Downstream stages must turn it into measurable requirements, e.g. a redirect p95/throughput target under concurrent load, an availability goal, and what 'trustworthy' means (reliable redirects and probes, accurate click counts, safe and unambiguous links, correct docs).\n\nThe change centres on the public redirect hot path, GET/HEAD /{code}. Today each request opens one session, runs an indexed SELECT on links.code that loads the full row, then INSERTs a click_event and COMMITs synchronously in the same request. On SQLite there is no WAL and no busy_timeout, so concurrent click commits block readers. The connection pool is SQLAlchemy's default (QueuePool 5+10, 30 s checkout timeout) and is not configurable. The stats and detail endpoints aggregate unbounded click sets; for a campaign-scale link, stats pulls every timestamp into Python memory.\n\nI found these existing defects related to the brief:\n- HEAD /healthz and HEAD /readyz are captured by the catch-all HEAD /{code} route and return 404 'Link not found'.\n- On SQLite, the link lookup itself can stall for up to 5 s or fail with 503 under write contention. The runbook wrongly says redirects still return 307.\n- The stats query is unbounded in memory and time.\n- On MySQL, the case-sensitive base62 codes are compared case-insensitively.\n- The docs say there is no authentication, but the code enforces API_KEY.\n\nConstraints the design must respect:\n- A static test bans lru_cache/cache and module-level cache dicts (NFR-9), so any cache must be per-app (app.state) and must not break immediate deactivation (410) or the Cache-Control: no-store contract.\n- create_all never alters existing tables or adds indexes to them, and there are no migrations. Schema changes to existing tables will not reach deployed databases unless someone runs manual DDL.\n- Tests expect click counts to be visible synchronously right after a redirect, which constrains async or batched click ingestion.",
+    "architecture": [
+      {
+        "path": "app/main.py",
+        "responsibility": "Entry point. create_app(settings) builds the engine and session factory for each app (on app.state), runs create_all in the lifespan, registers error handlers and RequestLoggingMiddleware, and includes routers in order: health, links, then the catch-all redirect last. It also defines the module-level app = create_app()."
+      },
+      {
+        "path": "app/api/deps.py",
+        "responsibility": "HTTP-layer dependencies: get_settings (app.state.settings), require_api_key (constant-time X-API-Key check, fails closed), get_link_service and get_stats_service (request-scoped services over get_db), and build_short_url."
+      },
+      {
+        "path": "app/api/redirect.py",
+        "responsibility": "Public catch-all GET /{code} (307 + click record) and HEAD /{code} (no click). Builds raw 307 responses with the exact Location header and Cache-Control: no-store. Must stay registered last."
+      },
+      {
+        "path": "app/api/links.py",
+        "responsibility": "Management API under /api/links, protected by an API key at router level: POST create (Idempotency-Key), GET detail (with total_clicks), DELETE soft-deactivate, GET /stats?days=1..365."
+      },
+      {
+        "path": "app/api/health.py",
+        "responsibility": "GET /healthz (liveness, no DB) and GET /readyz (SELECT 1). Both are GET-only APIRoutes."
+      },
+      {
+        "path": "app/services/link_service.py",
+        "responsibility": "Business rules and transaction ownership: create with code-collision retry and idempotency, lookup/404 (format check before querying), deactivate, resolve_for_redirect (HEAD) and resolve_and_record_click (GET: lookup, 410 check, best-effort click INSERT + commit, rollback and log on failure), and the hash_ip HMAC."
+      },
+      {
+        "path": "app/services/stats_service.py",
+        "responsibility": "Per-link stats: COUNT total, loads click timestamps in the window and buckets them by day in Python, groups referrers in SQL then sorts and caps them in Python (top 10)."
+      },
+      {
+        "path": "app/services/codes.py",
+        "responsibility": "CSPRNG base62 code generation (secrets), reserved-word check (casefold), code format regex ^[A-Za-z0-9]{1,32}$."
+      },
+      {
+        "path": "app/repositories/link_repository.py",
+        "responsibility": "get_by_code (SELECT full Link row) and add (flush only)."
+      },
+      {
+        "path": "app/repositories/click_repository.py",
+        "responsibility": "add click (flush), count_for_link, created_at_since (returns a Python list of all timestamps), referrer_counts (GROUP BY referrer)."
+      },
+      {
+        "path": "app/repositories/idempotency_repository.py",
+        "responsibility": "get_by_key and add (flush) for idempotency keys."
+      },
+      {
+        "path": "app/models/link.py, app/models/click_event.py, app/models/idempotency_key.py, app/models/base.py",
+        "responsibility": "ORM models (DeclarativeBase, Mapped[]). links has UNIQUE(code). click_events has an index on (link_id, created_at) and no raw IP column. idempotency_keys has UNIQUE(key). base.py holds utcnow(), which returns naive UTC."
+      },
+      {
+        "path": "app/schemas/links.py, app/schemas/health.py",
+        "responsibility": "Pydantic v2 request/response models, strict target-URL validation (http/https only, ASCII, \u22642048 chars), _as_utc serialisation, and the ErrorResponse model."
+      },
+      {
+        "path": "app/core/config.py",
+        "responsibility": "Settings from env vars: DATABASE_URL, BASE_URL, SHORT_CODE_LENGTH, CODE_MAX_ATTEMPTS, IP_HASH_SALT, LOG_LEVEL, API_KEY (SecretStr, at least 16 chars). There is no module-level instance and no pool or SQLite tuning settings."
+      },
+      {
+        "path": "app/core/db.py",
+        "responsibility": "create_db_engine: SQLite gets check_same_thread=False only; other backends get pool_pre_ping. Also create_session_factory (expire_on_commit=True) and get_db, the request-scoped session dependency and the single test override point."
+      },
+      {
+        "path": "app/core/errors.py",
+        "responsibility": "Domain exceptions (400/404/409/410/503) plus JSON handlers. Any SQLAlchemyError becomes 503 and unhandled errors become a generic 500. No exception text is leaked."
+      },
+      {
+        "path": "app/core/middleware.py, app/core/logging.py",
+        "responsibility": "BaseHTTPMiddleware request log (method, path, status, duration_ms; no IPs or query strings) that also acts as the last-resort 500 handler. JSON-lines formatter on the 'app' logger."
+      },
+      {
+        "path": "tests/*",
+        "responsibility": "Isolated temp-SQLite app per test (conftest make_client, API key preset). Covers FR/NFR ids, plus AST architecture and security checks and an NFR-4 performance test (p95 redirect < 50 ms, create < 100 ms on 10k seeded links, sequential and single-threaded)."
+      },
+      {
+        "path": "README.md, docs/API.md, docs/OPERATIONS.md, CHANGELOG.md",
+        "responsibility": "User and operations docs. They describe the redirect hot path, scaling, SQLite locking and caching guidance, and (out of date) say there is no authentication."
+      }
+    ],
+    "impacted_files": [
+      {
+        "path": "app/core/db.py",
+        "change": "modify",
+        "reason": "Main lever for redirect latency and reliability. For SQLite: enable WAL plus synchronous=NORMAL and a busy_timeout through a connect event, so click commits stop blocking redirect reads. For all backends: configurable pool_size, max_overflow and pool_timeout. Must keep check_same_thread=False and pool_pre_ping, and the per-app engine (no module-level state)."
+      },
+      {
+        "path": "app/core/config.py",
+        "change": "modify",
+        "reason": "New validated settings for any tuning knobs (e.g. DB pool size/overflow/timeout, SQLite busy timeout, an optional per-app cache TTL/size). Defaults must keep existing behaviour and tests green. test_settings_defaults_and_env pins the current defaults."
+      },
+      {
+        "path": "app/services/link_service.py",
+        "change": "modify",
+        "reason": "Hot path resolve_and_record_click and resolve_for_redirect. Candidates: a lightweight lookup (only id, url, is_active); an optional instance-scoped resolve cache with invalidation on deactivate; keeping click recording best-effort and isolated so a DB lock during the click write never fails or stalls the redirect. Transaction ownership stays here."
+      },
+      {
+        "path": "app/repositories/link_repository.py",
+        "change": "modify",
+        "reason": "Add a narrow column lookup for redirects (SELECT id, url, is_active WHERE code = ?) to avoid loading and refreshing the full ORM row."
+      },
+      {
+        "path": "app/repositories/click_repository.py",
+        "change": "modify",
+        "reason": "Stats performance: replace created_at_since (which returns every timestamp as a Python list) with a SQL-side aggregation, or at least a streamed or bounded query. Keep the query portable (no dialect-specific date functions unless guarded), since the ORM and stats must work on SQLite, Postgres and MySQL. The click insert path may change if batching or an alternative ingestion path is chosen."
+      },
+      {
+        "path": "app/services/stats_service.py",
+        "change": "modify",
+        "reason": "Consume the new aggregation. It must keep UTC-day bucketing, ascending order, omission of empty days, the all-time totals and referrer ordering, and the days window semantics."
+      },
+      {
+        "path": "app/api/redirect.py",
+        "change": "modify",
+        "reason": "The catch-all HEAD /{code} shadows HEAD on fixed GET routes (/healthz, /readyz). Fix by adding HEAD to the probe routes, or by excluding reserved codes in the redirect HEAD handler. Must preserve the exact Location header, Cache-Control: no-store, 404/410 JSON, and registration order."
+      },
+      {
+        "path": "app/api/health.py",
+        "change": "modify",
+        "reason": "Support HEAD on /healthz and /readyz (e.g. api_route with methods=['GET','HEAD']) so uptime monitors that use HEAD get 200 or 503 instead of 404 'Link not found'. /healthz must still not touch the DB."
+      },
+      {
+        "path": "app/main.py",
+        "change": "modify",
+        "reason": "Only if per-app state (e.g. a resolve cache object or tuned engine options) needs wiring into app.state or the lifespan. Router order (health, links, redirect last) must be preserved."
+      },
+      {
+        "path": "app/api/deps.py",
+        "change": "modify",
+        "reason": "Only if LinkService gains a new collaborator (e.g. a per-app cache from app.state or new settings) that the request-scoped provider must pass in."
+      },
+      {
+        "path": "tests/test_redirect_and_clicks.py",
+        "change": "modify",
+        "reason": "Add tests for new hot-path behaviour: deactivation takes effect immediately even with any cache, the click is still recorded and visible, and a lookup or click-write lock does not break the redirect."
+      },
+      {
+        "path": "tests/test_health_and_errors.py",
+        "change": "modify",
+        "reason": "Add a regression test that HEAD /healthz and HEAD /readyz return 200 (and 503 on DB failure for readyz), not 404."
+      },
+      {
+        "path": "tests/test_stats.py",
+        "change": "modify",
+        "reason": "Cover SQL-side aggregation equivalence (UTC-midnight bucketing, window edges, referrer ordering with NULL) and large-volume behaviour."
+      },
+      {
+        "path": "tests/test_config_openapi_architecture.py",
+        "change": "modify",
+        "reason": "Settings defaults and validation for the new knobs, SQLite PRAGMA verification (WAL, busy_timeout), and optionally a concurrent-load performance test (the current NFR-4 test is sequential and single-threaded, so it cannot detect lock contention)."
+      },
+      {
+        "path": "tests/test_perf_concurrency.py",
+        "change": "add",
+        "reason": "New concurrent redirect-plus-create load test (thread pool against a temp SQLite DB). It should assert no 5xx and a p95 bound under mixed read/write load, which is what campaign traffic looks like. Mark it slow."
+      },
+      {
+        "path": "README.md",
+        "change": "modify",
+        "reason": "Fix the stale 'no authentication' notice and add API_KEY (and any new settings) to the configuration table."
+      },
+      {
+        "path": "docs/API.md",
+        "change": "modify",
+        "reason": "Fix 'Authentication: none in this release', document 401 and X-API-Key, and document HEAD on the probes."
+      },
+      {
+        "path": "docs/OPERATIONS.md",
+        "change": "modify",
+        "reason": "Fix the 'No authentication' security note. Correct the SQLite-locking section (redirect lookups can also stall or 503). Document new tuning settings, WAL, pool sizing for campaign load, HEAD probes, and stats cost changes."
+      },
+      {
+        "path": "CHANGELOG.md",
+        "change": "modify",
+        "reason": "[Unreleased] is empty even though API-key auth was added. Record that, plus the performance and reliability changes."
+      }
+    ],
+    "apis_affected": [
+      "GET /{code}: public redirect hot path (latency, lock behaviour, click recording; possibly a cache)",
+      "HEAD /{code}: currently shadows HEAD on /healthz and /readyz",
+      "HEAD /healthz, HEAD /readyz: currently 404 'Link not found'; should be 200 (readyz may also return 503)",
+      "GET /healthz, GET /readyz: must keep their behaviour (healthz never touches the DB)",
+      "GET /api/links/{code}/stats: aggregation strategy and performance for high-volume links",
+      "GET /api/links/{code}: total_clicks COUNT cost for high-volume links",
+      "DELETE /api/links/{code}: must invalidate any redirect cache so the 410 takes effect immediately",
+      "POST /api/links: indirectly affected by engine/pool/WAL changes (write contention with clicks)"
+    ],
+    "data_model_changes": [
+      "None required for the core performance and reliability fixes. WAL, busy_timeout and pool settings are connection or engine-level, not schema.",
+      "Optional, NOT recommended without a migration plan: a denormalised links.click_count column, or new indexes on click_events (e.g. (link_id, referrer)). create_all will not add columns or indexes to existing tables in deployed databases, and there is no migration tooling. Any such change needs documented manual DDL, or must be limited to brand-new tables.",
+      "If SQLite WAL is enabled, the database gains -wal and -shm side files next to shortener.db. The backup guidance in OPERATIONS.md must change: use sqlite3 .backup, or copy all three files while the service is stopped."
+    ],
+    "data_flows": [
+      "Redirect GET: client -> RequestLoggingMiddleware -> router (catch-all /{code}, registered last) -> get_link_service -> get_db (session from app.state.session_factory) -> LinkService.resolve_and_record_click -> codes.is_valid_code_format -> LinkRepository.get_by_code (SELECT links WHERE code=?) -> 404/410 via AppError handler, or ClickRepository.add (INSERT click_events, with referrer/UA truncated and ip_hash = HMAC(IP_HASH_SALT, request.client.host)) -> session.commit (fsync on SQLite) -> 307 with Location = stored URL and Cache-Control: no-store -> session.close.",
+      "Redirect HEAD: same lookup through resolve_for_redirect with no click write. Also currently receives HEAD /healthz and HEAD /readyz, because the probe routes are GET-only APIRoutes and Starlette falls through to the FULL match on HEAD /{code}.",
+      "Deactivate: DELETE /api/links/{code} -> require_api_key -> LinkService.deactivate -> UPDATE links SET is_active=false, deactivated_at -> commit. The next redirect must return 410 immediately; any cache must be invalidated on this path and must not serve stale data across instances or workers.",
+      "Stats: GET /api/links/{code}/stats -> StatsService.get_stats -> get_by_code -> COUNT(click_events) -> SELECT created_at of every click in the window into a Python list -> Counter by UTC date -> GROUP BY referrer (all time) -> Python sort and top 10.",
+      "Detail: GET /api/links/{code} -> get_link_detail -> get_by_code + COUNT(click_events WHERE link_id).",
+      "Create: POST /api/links -> validate URL -> optional idempotency lookup -> generate code (secrets) -> INSERT links (flush) -> optional INSERT idempotency_keys -> commit -> router reads link attributes after commit. Because expire_on_commit=True, this triggers an extra refresh SELECT.",
+      "Startup: create_app -> create_db_engine (per-app) -> lifespan create_all (creates only missing tables; never alters existing ones or adds new indexes to them) -> shutdown engine.dispose.",
+      "Readiness: GET /readyz -> get_db -> SELECT 1 -> 200, or 503 'Database is not ready'."
+    ],
+    "regression_areas": [
+      "Redirect contract (FR-5): 307 with a Location byte-identical to the stored URL (no re-quoting), Cache-Control: no-store, 404 JSON for unknown or malformed codes with no DB query for malformed ones, 410 JSON for deactivated links with no Location.",
+      "Immediate deactivation (FR-7): after DELETE, the very next GET/HEAD /{code} must return 410. Any cache (per-instance, multi-worker, multi-replica) must not serve stale 307s; this is critical for phishing takedown during a public campaign.",
+      "Click recording (FR-8): exactly one click_event per successful GET, none for HEAD, 404 or 410. Counts must be visible right after the redirect (test_n_redirects_create_n_click_events reads total_clicks immediately). Referrer and UA truncation (2048/512). Best-effort: a click-write failure still returns 307 and logs without the IP.",
+      "Privacy (NFR-1): no raw IP stored or logged anywhere, including any new queue, buffer, cache key or log line; ip_hash is HMAC-SHA256 only when the salt is set.",
+      "Stats semantics (FR-9): UTC-day bucketing across midnight, the days 1..365 window including today, empty days omitted, all-time totals, referrer ordering (count desc, referrer asc, NULL last on ties), top 10, NULL grouping for missing or empty referrers.",
+      "Probes (FR-10): /healthz never touches the DB (the test swaps in an exploding session factory); /readyz returns 503 without exception text; probes and docs are not shadowed by the catch-all.",
+      "Router order: the redirect router is included last; fixed routes and /docs, /redoc and /openapi.json keep working; the OpenAPI schema keeps listing the same paths and named schemas, and HEAD /{code} stays out of the schema.",
+      "Error handling (FR-11/NFR-3): JSON {detail} everywhere, SQLAlchemyError becomes 503, unknown errors become a generic 500, no leaks of stack traces, SQL or exception text.",
+      "Auth (test_auth.py): /api/links* requires X-API-Key (constant-time compare, fails closed); redirect and probes stay public.",
+      "Idempotency and code allocation (FR-3/FR-4): unique constraints, collision retry, 503 on exhaustion, race handling. These are sensitive to session/transaction changes and to WAL or locking changes.",
+      "Architecture and static checks (NFR-2/6/9): layering points inward; services import no FastAPI or Starlette; core imports no api, services or repositories; no lru_cache/cache names and no module-level cache dicts/lists/sets; no eval/exec/subprocess; text() only with literals; requirements pinned with ==.",
+      "Test isolation: every app built by create_app has its own engine and state; no module-level settings or caches that leak between tests.",
+      "Performance budget NFR-4 (test_performance_p95_redirect_and_create): p95 redirect < 50 ms and create < 100 ms on 10k seeded links. New features must not regress it.",
+      "Request logging (NFR-8): one line per request with method, path, status and duration_ms; no query string, IP or X-Forwarded-For."
+    ],
+    "existing_defects": [
+      {
+        "description": "HEAD requests to the probe endpoints are captured by the catch-all redirect HEAD route and return 404 {\"detail\":\"Link not found\"}, after an unnecessary DB lookup. HEAD /readyz with the DB down returns a 503 from the lookup path, not from the readiness check. Uptime monitors and load balancers that probe with HEAD (common for external campaign monitoring) would report the service as broken.",
+        "location": "app/api/health.py (healthz/readyz declared with @router.get only) + app/api/redirect.py redirect_head (@router.head(\"/{code}\"))",
+        "evidence": "FastAPI APIRoute, unlike Starlette's Route, does not add HEAD automatically for GET routes. Starlette's router therefore records GET /healthz as a PARTIAL match (method mismatch) and keeps scanning. HEAD /{code} is then a FULL match with code='healthz'. is_valid_code_format('healthz') is True, so LinkRepository.get_by_code runs and raises NotFoundError (reserved words are never issued as codes). No test covers HEAD on the probes: test_probes_not_shadowed_by_redirect_route uses only GET."
+      },
+      {
+        "description": "On SQLite, redirects are not insulated from write contention. The engine runs in the default rollback-journal mode with pysqlite's default 5 s busy timeout. While a click or create commit holds the lock, concurrent redirect lookups wait up to 5 s, or fail with OperationalError, which surfaces as 503 to the visitor. The runbook wrongly says that under 'database is locked' the 'Redirects themselves still return 307'.",
+        "location": "app/core/db.py create_db_engine; app/services/link_service.py resolve_and_record_click; docs/OPERATIONS.md 'SQLite \"database is locked\"'",
+        "evidence": "create_db_engine passes only connect_args={'check_same_thread': False} for SQLite: no journal_mode=WAL, no busy_timeout or synchronous pragma. In resolve_and_record_click, `link = self._get_or_404(code)` runs OUTSIDE the try/except that only guards the click insert and commit. A lock or OperationalError on the lookup propagates to _sqlalchemy_error_handler and becomes 503. Every redirect also performs its own INSERT + COMMIT, so there is one write transaction per visit."
+      },
+      {
+        "description": "Connection pool sizing is fixed at SQLAlchemy defaults and cannot be configured. FastAPI runs sync endpoints in a threadpool of 40 tokens, but the QueuePool allows only 5+10 connections with a 30 s checkout timeout. Under spike load, excess requests queue for up to 30 s and then fail with TimeoutError, which becomes 503.",
+        "location": "app/core/db.py create_db_engine; app/core/config.py Settings",
+        "evidence": "create_engine(database_url, pool_pre_ping=True) and create_engine(sqlite_url, connect_args=...) pass no pool_size, max_overflow or pool_timeout. Settings has no such fields. OPERATIONS.md: 'The engine uses SQLAlchemy's default pool size.'"
+      },
+      {
+        "description": "The stats endpoint's time and memory are unbounded and grow linearly with a link's clicks. Every click timestamp in the window (up to 365 days) is loaded into a Python list and bucketed in Python, and referrers are grouped over all-time clicks with no supporting index. A TV- or billboard-scale link (millions of clicks) would make GET /stats very slow or exhaust worker memory. GET /api/links/{code} also runs an all-time COUNT on every call.",
+        "location": "app/repositories/click_repository.py created_at_since / referrer_counts / count_for_link; app/services/stats_service.py get_stats",
+        "evidence": "created_at_since returns `list(self.session.execute(stmt).scalars().all())`, and stats_service does `Counter(ts.date() for ts in self.click_repo.created_at_since(link.id, since))`. referrer_counts GROUP BYs over all click_events for the link, and the only index is (link_id, created_at). OPERATIONS.md acknowledges: 'for very popular links the response gets slower as the window grows'."
+      },
+      {
+        "description": "Documentation is out of date and contradicts the code on authentication, which hurts trust for operators setting up the campaign. README, API.md and OPERATIONS.md say there is no authentication, and the README configuration table omits API_KEY. CHANGELOG [Unreleased] does not mention the API-key feature.",
+        "location": "README.md (Security notice, Configuration table); docs/API.md ('Authentication: none in this release', error table lacks 401); docs/OPERATIONS.md (Security notes 'No authentication (known gap)'); CHANGELOG.md ([Unreleased] empty)",
+        "evidence": "app/api/links.py declares `dependencies=[Depends(require_api_key)]` and documents 401. app/core/config.py defines `api_key: SecretStr | None` (min 16 chars, fail-closed). app/main.py logs a warning when API_KEY is unset. tests/test_auth.py covers 401 behaviour."
+      },
+      {
+        "description": "Short codes are case-sensitive base62 by design, but on MySQL (a documented supported backend) links.code uses the default case-insensitive collation. Lookups such as /AbC1234 and /abc1234 resolve to the same row, and the UNIQUE constraint treats case variants as collisions. Behaviour therefore differs from SQLite and Postgres.",
+        "location": "app/models/link.py (code: String(32), no collation); app/services/codes.py ALPHABET",
+        "evidence": "ALPHABET = string.ascii_letters + string.digits (mixed case). Link.code is mapped_column(String(32)) with no collation or binary type. README states it 'runs on PostgreSQL or MySQL if you change DATABASE_URL'."
+      },
+      {
+        "description": "Minor performance issue: after commit in create_link, the router reads link attributes. Because the session uses expire_on_commit=True, this issues an extra refresh SELECT on every create (and on every replay path that commits).",
+        "location": "app/core/db.py create_session_factory (expire_on_commit=True); app/api/links.py create_link reading link.code/url/is_active/created_at after service commit",
+        "evidence": "sessionmaker(bind=engine, autoflush=False, expire_on_commit=True). LinkService.create_link calls self.session.commit() and returns the ORM Link, then LinkCreatedResponse(code=link.code, ...) is built in the router."
+      }
+    ],
+    "risks": [
+      {
+        "id": "R1",
+        "description": "The brief is ambiguous: 'faster' and 'more trustworthy' have no measurable targets (expected peak RPS, p95/p99, availability), and the deadline is next week. Design could over-reach (async ingestion, CDN caching, schema changes) or miss what marketing actually means (e.g. confusable characters in codes typed from a billboard, a human-friendly 404 page, link-preview safety).",
+        "likelihood": "high",
+        "impact": "high",
+        "mitigation": "The requirements stage should pin concrete acceptance criteria: target redirect p95 under N concurrent clients on the production DB, zero 5xx on redirects under contention, HEAD probe support, accurate click counts, docs corrected. Explicitly list out-of-scope items (vanity aliases, HTML error pages, rate limiting at the gateway). Prefer small, low-risk changes given the one-week deadline."
+      },
+      {
+        "id": "R2",
+        "description": "Caching redirects for speed conflicts with immediate deactivation (410), with click counting, and with the Cache-Control: no-store contract. An in-process cache is not invalidated across workers or replicas, so a deactivated phishing link could keep redirecting. The NFR-9 static test also fails on lru_cache/cache names or module-level cache containers.",
+        "likelihood": "medium",
+        "impact": "high",
+        "mitigation": "Prefer DB-level fixes (WAL, busy_timeout, narrow lookup, pool sizing) over caching. If a cache is used, make it per-app on app.state with a short TTL, invalidated on deactivate, cache only active-link lookups, and document a max staleness window for multi-instance setups. Keep no-store on responses and never add a CDN or browser cache."
+      },
+      {
+        "id": "R3",
+        "description": "Moving click recording off the request path (background tasks, batching, a queue) would cut latency but can lose clicks on crash or shutdown. It breaks tests that read counts immediately after a redirect, and risks leaking the IP into in-memory buffers or logs.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Keep click recording synchronous but make it non-blocking for the visitor: short busy_timeout on the write path, failure isolated in try/except. If deferral is still chosen, flush on lifespan shutdown, hash the IP before enqueueing, and update tests deliberately with human approval."
+      },
+      {
+        "id": "R4",
+        "description": "Schema changes to existing tables (new columns or indexes) will not reach deployed databases, because create_all skips existing tables and there are no migrations. Code relying on them would fail at runtime with 503s.",
+        "likelihood": "medium",
+        "impact": "high",
+        "mitigation": "Avoid altering links, click_events or idempotency_keys. If an index or column is essential, document the manual DDL in OPERATIONS.md, make the code tolerate its absence, or limit additions to new tables."
+      },
+      {
+        "id": "R5",
+        "description": "Enabling SQLite WAL changes the on-disk layout (-wal and -shm files) and backup procedure, needs a writable directory, and does not work on network filesystems. Pool or pragma changes could also affect the in-memory 'sqlite://' URLs used in tests (WAL is not applicable there).",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Apply pragmas through a connect event only for file-based SQLite, and skip or tolerate them for :memory:. Add a test that verifies the pragmas on the temp DB. Update the backup and runbook docs."
+      },
+      {
+        "id": "R6",
+        "description": "SQLite remains single-writer even with WAL. A campaign spike with many uvicorn workers or replicas on SQLite will still produce lock errors. The real production capacity fix is PostgreSQL plus pool sizing, but no Postgres driver is pinned in requirements.txt.",
+        "likelihood": "high",
+        "impact": "high",
+        "mitigation": "State clearly in OPERATIONS.md that campaign traffic needs PostgreSQL/MySQL with a tuned pool. Make pool settings configurable. Do not add network calls or new heavy dependencies; a pinned driver can be added only if requirements explicitly ask for it."
+      },
+      {
+        "id": "R7",
+        "description": "The SQL-side rewrite of stats aggregation (date bucketing) is dialect-sensitive: func.date and strftime differ across SQLite, Postgres and MySQL. It could change UTC-midnight bucketing or the window edge semantics.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Keep queries portable: e.g. GROUP BY in SQL only where it is portable, or stream with yield_per instead of building a list. Keep the existing stats tests, including test_day_bucketing_across_utc_midnight and the fixed-now service test, as the equivalence oracle."
+      },
+      {
+        "id": "R8",
+        "description": "Fixing HEAD on the probes could disturb the catch-all routing (order, OpenAPI paths, the 405 on POST /healthz) or make /healthz touch the DB.",
+        "likelihood": "low",
+        "impact": "medium",
+        "mitigation": "Use api_route(methods=['GET','HEAD']) on the probes, or add a separate HEAD route registered before the redirect router. Assert POST /healthz is still 405, HEAD /healthz is 200 without DB access, and HEAD /{code} is unchanged."
+      },
+      {
+        "id": "R9",
+        "description": "Click counts used for campaign reporting may be inflated by link-preview bots and crawlers (GETs from social and messaging unfurlers). Under any deferral design they could also be under-counted, which undermines 'trustworthy' analytics.",
+        "likelihood": "medium",
+        "impact": "low",
+        "mitigation": "Flag this to requirements as a possible scope item (e.g. a bot flag derived from User-Agent, no IP). Do not change counting semantics without explicit requirements and test updates."
+      },
+      {
+        "id": "R10",
+        "description": "Billboard and TV audiences will type codes by hand. Case-sensitive base62 with confusable characters (0/O, 1/l/I), plus JSON-only 404 pages, means mistyped codes give a poor, untrustworthy experience. On MySQL, case-insensitive collation also silently changes matching.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Raise as a requirements question (custom or vanity aliases, a confusable-free alphabet for new codes, binary collation guidance for MySQL). Any change must keep existing codes resolvable and keep JSON errors for API clients."
+      },
+      {
+        "id": "R11",
+        "description": "The NFR-4 performance test is sequential and single-threaded, so it cannot detect lock contention or pool exhaustion, the actual campaign failure modes. Adding a concurrent load test could make CI flaky.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Add a concurrency test marked slow, with generous thresholds that assert no 5xx rather than tight latency, using a temp file DB. Keep the existing NFR-4 thresholds unchanged."
+      }
+    ]
+  }
+}

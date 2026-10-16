@@ -1,0 +1,74 @@
+{
+  "name": "clarification_log",
+  "version": 3,
+  "hash": "e15f4acf9a5d79cf",
+  "producer": "clarify",
+  "derived_from": {
+    "requirements_spec": "177a1306cb37a92f"
+  },
+  "value": {
+    "asked": [],
+    "defaults_assumed": [
+      {
+        "id": "Q-3",
+        "default": "Trustworthy means reliable redirects under load, truthful probes, links that stop at campaign end, accurate bounded analytics, and correct docs. The other options are out of scope."
+      },
+      {
+        "id": "Q-4",
+        "default": "No redirect cache. The target is met through WAL, the narrow lookup and pool sizing."
+      },
+      {
+        "id": "Q-5",
+        "default": "Keep it synchronous and best-effort, with lock waits bounded by SQLITE_BUSY_TIMEOUT_MS."
+      },
+      {
+        "id": "Q-6",
+        "default": "Count all GETs, and document that counts include automated GETs."
+      },
+      {
+        "id": "Q-7",
+        "default": "The code default stays 5000 ms. The campaign runbook recommends 1000 ms."
+      },
+      {
+        "id": "Q-8",
+        "default": "Not used for the campaign. FR-19 stays a 'could'."
+      },
+      {
+        "id": "Q-9",
+        "default": "Operations runs it with existing tooling, following the OPERATIONS.md checklist (NFR-20)."
+      },
+      {
+        "id": "Q-10",
+        "default": "Use expires_at = 23:59:00Z on 31 December of the campaign year (taken as the coming 31 December), as the amendment literally states. Operators confirm the year with marketing before running the runbook step."
+      },
+      {
+        "id": "Q-11",
+        "default": "Per-link expiry (FR-23) plus PATCH for existing links (FR-24). Operators script one PATCH per campaign link and verify it with the detail endpoint. No bulk endpoint and no global cutoff."
+      },
+      {
+        "id": "Q-12",
+        "default": "UTC hours, zero-filled, half-open [start, end), at most 744 hours, per link only. The runbook explains how to convert slot times to UTC."
+      },
+      {
+        "id": "Q-13",
+        "default": "410 JSON 'Link has expired', consistent with deactivated links. The fallback landing page is out of scope."
+      },
+      {
+        "id": "Q-14",
+        "default": "Allowed through PATCH with the API key (FR-24). Deactivation stays final."
+      }
+    ],
+    "answered_before": {
+      "Q-1": {
+        "question": "What are the measurable campaign targets: expected peak redirect requests per second or concurrent visitors, the redirect latency target (p95/p99), and the availability goal during the campaign window?",
+        "answer": "Modest: up to about 50 RPS, p95 < 100 ms, best effort (one instance is enough)",
+        "by": "human:kajalmahata"
+      },
+      "Q-2": {
+        "question": "Which database and topology will serve the campaign in production: SQLite on one instance, or PostgreSQL/MySQL with several workers or replicas? If PostgreSQL, should we pin a driver (e.g. psycopg) in requirements.txt?",
+        "answer": "Keep the current SQLite backend and harden it (WAL, busy_timeout, configurable pool). Add no new driver. Document the move to PostgreSQL for multi-worker or campaign scale.",
+        "by": "human:kajalmahata"
+      }
+    }
+  }
+}

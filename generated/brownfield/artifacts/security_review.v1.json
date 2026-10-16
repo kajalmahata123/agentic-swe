@@ -1,0 +1,57 @@
+{
+  "name": "security_review",
+  "version": 1,
+  "hash": "22d2ae181a500b11",
+  "producer": "security_review",
+  "derived_from": {
+    "design": "c09f3c47030c55ea",
+    "verification_report": "130e9b886c628f0c"
+  },
+  "value": {
+    "summary": "I reviewed the CR-142 change (aliases and expiry) in the merged URL shortener at 9a88677 without changing anything. I found no critical or high issues. There are 3 medium defence-in-depth or privacy gaps and 3 low hardening items. Only `python -m pip check` was run (no broken requirements); nothing else was executed, and the low-severity crash in L-1 was reasoned from the code, not reproduced.\n\nWhat holds up:\n- **URL schemes:** `validate_target_url` (app/schemas/links.py) only accepts absolute http/https. It ignores letter case for the scheme and rejects whitespace, control characters and non-ASCII. So `javascript:`, `data:` and `file:` targets are impossible, and `alias`/`expires_at` do not bypass it.\n- **Header injection:** the `Location` header is the validated stored URL. Control characters are rejected, so CRLF injection is not possible.\n- **SSRF:** the server never fetches target URLs.\n- **SQL:** all queries use the ORM. The migration DDL in `app/core/db.py:65-67` is literal `text()` with no user input.\n- **Aliases:** checked twice with `fullmatch` on explicit ASCII classes (schema at app/schemas/links.py:24 and service at app/services/codes.py:37). The reserved-word list lives in one place and ignores case. Lookups reject malformed codes before querying the database. Alias races return 409 through the unique constraint. Idempotency rows are only written with a successful link.\n- **Expiry:** `expires_at` is ISO-only (number-to-timestamp conversion is blocked), converted to UTC, and checked against the server clock. The test clock hook (`app.state.clock`) is not reachable over HTTP.\n- **Authentication:** every `/api/links*` endpoint, including alias and expiry creation, needs `X-API-Key`. It is compared in constant time, fails closed when unset, and needs at least 16 characters. Redirects and probes stay public by design.\n- **Errors and logs:** responses are always `{\"detail\": ...}` with no stack traces. Logs are one JSON object per line, which prevents log injection, and contain no IPs or query strings.\n- **IP addresses:** raw IPs are never stored. `ip_hash` is an HMAC keyed by a secret salt, or NULL when no salt is set. `X-Forwarded-For` is ignored, so it can't be spoofed.\n\nWhat remains:\n- **Database errors log request data (M-1):** SQLAlchemy errors are logged with their bound parameters (URL, alias, `expires_at`, referrer, user agent, `ip_hash`, idempotency key). This breaks the documented rule that alias and `expires_at` values are never logged (NFR-8), and the claim that request bodies are never logged.\n- **No rate limiting (M-2):** there is none in the app. Each public redirect also writes a click row, and the new human-chosen aliases are easy to guess and enumerate.\n- **Click data minimisation (M-3):** referrer and user agent are stored as sent, and there is no retention or purge, so click data is kept forever.\n- **Low items:** L-1 to L-3 cover an unhandled overflow on extreme `expires_at` values (an authenticated client can trigger a 500), the IP hash salt not being held as a secret type, and dependency pinning.\n\nNo release blocker from a security standpoint. M-1 should be fixed before release because it contradicts NFR-8 and the documented log guarantees; it is a one-line change. M-2 and M-3 can be tracked as follow-ups with proxy and retention controls documented for operators.",
+    "findings": [
+      {
+        "id": "M-1",
+        "severity": "medium",
+        "title": "Database errors write bound parameters (URL, alias, expires_at, referrer, user agent, ip_hash, idempotency key) to logs, against NFR-8 and the documented 'never logged' guarantees",
+        "location": "app/core/db.py:25-26 (create_engine without hide_parameters); logged at app/core/errors.py:94, app/services/link_service.py:333, app/core/middleware.py:28",
+        "recommendation": "Pass hide_parameters=True to both create_engine(...) calls in create_db_engine. That removes the '[parameters: ...]' part from SQLAlchemy error messages and tracebacks. Then add a test that forces an OperationalError during the click insert and during an alias create, and uses caplog to check that the alias, url, referrer and user-agent values are not in the formatted record. Optionally, log only the exception class name (not exc_info) for the best-effort click failure."
+      },
+      {
+        "id": "M-2",
+        "severity": "medium",
+        "title": "No rate limiting: each public redirect writes a row, and the new guessable aliases are easy to enumerate",
+        "location": "app/api/redirect.py:46-54 (GET /{code} -> resolve_and_record_click); app/services/link_service.py:300-334; app/api/links.py:51-115 (POST)",
+        "recommendation": "Enforce per-IP and global request limits at the reverse proxy or gateway in front of GET/HEAD /{code}, and per key on POST /api/links. Make this a deployment requirement in OPERATIONS.md, not just a note. In the app, consider sampling or de-duplicating clicks (for example one per ip_hash, link and minute) so floods can't fill the database or inflate stats. Return the same response for unknown and deactivated/expired codes only if enumeration resistance is wanted. At minimum, document that aliases make target URLs findable by anyone who guesses the word."
+      },
+      {
+        "id": "M-3",
+        "severity": "medium",
+        "title": "Referrer and user agent stored as sent, with no retention or purge (data minimisation)",
+        "location": "app/services/link_service.py:322-328; app/models/click_event.py:24-26; docs/OPERATIONS.md 'Retention'",
+        "recommendation": "Store only the referrer origin (scheme and host), dropping path, query and fragment, since only top referrers are reported. Store a reduced user agent (browser family and major version) or drop it, because it isn't used in any response. Add a configurable retention setting (for example CLICK_RETENTION_DAYS) with a purge job, or at least ship a documented purge script, so personal data in click_events isn't kept indefinitely by default."
+      },
+      {
+        "id": "L-1",
+        "severity": "low",
+        "title": "Extreme expires_at values near year 1 or 9999 with an offset likely raise OverflowError and return a 500 (inferred from code, not reproduced)",
+        "location": "app/schemas/links.py:80 (_as_utc -> v.astimezone(dt.UTC)), called from the LinkCreate._expires_at_utc after-validator",
+        "recommendation": "In the LinkCreate after-validator, catch OverflowError from _as_utc and re-raise it as ValueError('expires_at is out of range'), so FastAPI returns a 422 list detail. Or reject years outside a sane range (for example 1970-9998) in the before-validator. Add tests for '9999-12-31T23:00:00-05:00' and '0001-01-01T00:30:00+01:00'. Only authenticated clients can trigger this, and the 500 body is generic, so nothing leaks."
+      },
+      {
+        "id": "L-2",
+        "severity": "low",
+        "title": "IP_HASH_SALT is a plain str, not SecretStr",
+        "location": "app/core/config.py:27",
+        "recommendation": "Declare ip_hash_salt as SecretStr | None, matching api_key, so repr(settings), debug output or error reports can't expose it. Call .get_secret_value() in deps.get_link_service when passing it to LinkService. Anyone with the salt can brute-force the hashed IPv4 addresses."
+      },
+      {
+        "id": "L-3",
+        "severity": "low",
+        "title": "Dependencies: transitive packages not pinned, test tools in runtime requirements",
+        "location": "requirements.txt:1-8",
+        "recommendation": "Split runtime dependencies (fastapi, uvicorn, sqlalchemy, pydantic, pydantic-settings) from dev/test ones (pytest, pytest-cov, httpx). Generate a hash-pinned lock file (for example pip-compile --generate-hashes) that also pins starlette, h11, httpcore and anyio. Run pip-audit in CI; in particular, make sure h11 >= 0.16.0 (CVE-2025-43859, request smuggling) if uvicorn is ever exposed without a proxy in front. pip check reports no broken requirements today."
+      }
+    ]
+  }
+}

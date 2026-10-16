@@ -1,0 +1,24 @@
+{
+  "name": "impl_report:WP-1",
+  "version": 1,
+  "hash": "fcc0fcbe87d69838",
+  "producer": "impl:WP-1",
+  "derived_from": {
+    "requirements_spec": "a29fdf7abe9a8b61",
+    "design": "c09f3c47030c55ea"
+  },
+  "value": {
+    "summary": "WP-1 is done: I added the new 422 and expired-link errors and the alias and lookup code rules, without changing any existing behaviour. `python -m compileall -q app` succeeds and all 165 existing tests pass.\n\n**`app/core/errors.py`** (additions only):\n- `LINK_EXPIRED_DETAIL = \"Link has expired\"`.\n- `LinkExpiredError(GoneError)`: returns 410 (inherited) with that detail.\n- `UnprocessableEntityError(AppError)`: returns 422 with detail \"Unprocessable entity\".\n- `GoneError` still says \"Link has been deactivated\", and the existing error handlers are unchanged.\n\n**`app/services/codes.py`**:\n- `RESERVED_CODES` now also includes \"metrics\". All 8 existing entries are still there.\n- `generate_code`, `is_reserved`, `CODE_PATTERN` and `is_valid_code_format` are unchanged, so \"abc-123\" is still invalid as a generated code. The module still uses `secrets` and never `random`.\n- New constants: `ALIAS_MIN_LENGTH` (3), `ALIAS_MAX_LENGTH` (32), `ALIAS_PATTERN` (3\u201332 characters) and `LOOKUP_CODE_PATTERN` (1\u201332 characters). Both patterns allow only explicit ASCII ranges: letters, digits, `_` and `-`.\n- New functions `is_valid_alias` and `is_valid_lookup_code`. Both use `fullmatch`, so a trailing newline never matches. Both have docstrings.",
+    "files_changed": [
+      "app/core/errors.py",
+      "app/services/codes.py"
+    ],
+    "notes": [
+      "`LinkExpiredError` is placed after `GoneError` because it subclasses it, and `UnprocessableEntityError` comes after it.",
+      "errors.py imports nothing new, so the architecture test's ban on importing services, repositories or the api layer from it still holds."
+    ],
+    "open_issues": [
+      "Nothing calls the new functions yet. WP-4 will use `is_valid_lookup_code`, `is_valid_alias`, `UnprocessableEntityError` and `LinkExpiredError` in `link_service.py` and `stats_service.py`."
+    ]
+  }
+}

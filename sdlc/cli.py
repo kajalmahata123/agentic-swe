@@ -330,6 +330,16 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_export(args: argparse.Namespace) -> int:
+    from sdlc.engine.bootstrap import home
+    from sdlc.snapshot import export_runs
+
+    logs = {name: Path(f".sdlc-{name}.log") for name in ("greenfield", "brownfield", "ambiguous")}
+    runs = export_runs(Path(args.home) if args.home else home(), Path(args.out), logs)
+    print(c("ok", f"exported {len(runs)} runs as browsable folders under {args.out}/: {', '.join(runs)}"))
+    return 0
+
+
 def cmd_restore(args: argparse.Namespace) -> int:
     from sdlc.snapshot import restore
 
@@ -444,6 +454,11 @@ def build_parser() -> argparse.ArgumentParser:
     sn.add_argument("--out", default="demo-state")
     sn.add_argument("--home", help="state home to snapshot (default: $SDLC_HOME or .sdlc)")
     sn.set_defaults(fn=cmd_snapshot)
+
+    ex = sub.add_parser("export", help="export every run as plain browsable folders (code, artifacts, logs)")
+    ex.add_argument("--out", default="generated")
+    ex.add_argument("--home", help="state home to export (default: $SDLC_HOME or .sdlc)")
+    ex.set_defaults(fn=cmd_export)
 
     rs2 = sub.add_parser("restore", help="rebuild a state home from a snapshot (no API key needed)")
     rs2.add_argument("--from", dest="source", default="demo-state")

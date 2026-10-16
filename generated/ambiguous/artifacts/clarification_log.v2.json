@@ -1,0 +1,54 @@
+{
+  "name": "clarification_log",
+  "version": 2,
+  "hash": "969f40c37c98e6dc",
+  "producer": "clarify",
+  "derived_from": {
+    "requirements_spec": "2bad39293c85110d"
+  },
+  "value": {
+    "asked": [],
+    "defaults_assumed": [
+      {
+        "id": "Q-3",
+        "default": "Trustworthy means: redirects that keep working under load, probes that report the truth, bounded and accurate stats, case-correct matching, and docs that match the code. The other options are out of scope for this release."
+      },
+      {
+        "id": "Q-4",
+        "default": "No redirect cache in this release. The 50 RPS / p95 < 100 ms target is met through WAL, the narrow lookup and pool sizing."
+      },
+      {
+        "id": "Q-5",
+        "default": "Keep it synchronous and best-effort, with lock waits bounded by SQLITE_BUSY_TIMEOUT_MS. This is sufficient at ~50 RPS on SQLite with WAL."
+      },
+      {
+        "id": "Q-6",
+        "default": "Keep the current counting semantics and document that counts include automated GETs."
+      },
+      {
+        "id": "Q-7",
+        "default": "Code default stays 5000 ms to preserve current behaviour. The campaign deployment section recommends 1000 ms on SQLite, given the p95 < 100 ms target."
+      },
+      {
+        "id": "Q-8",
+        "default": "Not used for the campaign. Declare the binary collation in the model and document the DDL, with no automatic migration. FR-19 is a 'could'."
+      },
+      {
+        "id": "Q-9",
+        "default": "Operations runs it with their existing tooling, following the checklist in OPERATIONS.md (NFR-20). No load tool is added to this repository."
+      }
+    ],
+    "answered_before": {
+      "Q-1": {
+        "question": "What are the measurable campaign targets: expected peak redirect requests per second or concurrent visitors, the redirect latency target (p95/p99), and the availability goal during the campaign window?",
+        "answer": "Modest: up to about 50 RPS, p95 < 100 ms, best effort (one instance is enough)",
+        "by": "human:kajalmahata"
+      },
+      "Q-2": {
+        "question": "Which database and topology will serve the campaign in production: SQLite on one instance, or PostgreSQL/MySQL with several workers or replicas? If PostgreSQL, should we pin a driver (e.g. psycopg) in requirements.txt?",
+        "answer": "Keep the current SQLite backend and harden it (WAL, busy_timeout, configurable pool). Add no new driver. Document the move to PostgreSQL for multi-worker or campaign scale.",
+        "by": "human:kajalmahata"
+      }
+    }
+  }
+}

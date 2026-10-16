@@ -1,0 +1,19 @@
+{
+  "name": "docs_report",
+  "version": 1,
+  "hash": "536d0a3009ecd5c7",
+  "producer": "docs",
+  "derived_from": {
+    "requirements_spec": "a29fdf7abe9a8b61",
+    "design": "c09f3c47030c55ea"
+  },
+  "value": {
+    "summary": "I checked the existing CR-142 / BUG-77 docs against the code and they match. I then set the release to 1.1.0. Two things don't line up yet: `app/main.py` still reports version 1.0.0, and the new CR-142 test files aren't in the workspace, though the CHANGELOG says regression tests were added.\n\nThe pre-existing 165 tests pass (`python -m pytest -q`); no new tests have been added yet.\n\n**What I checked against the code:**\n- **Error messages:** the alias, expiry, deactivation and API-key messages match `app/services/link_service.py`, `app/core/errors.py` and `app/api/deps.py`.\n- **Validation rules:** the alias and lookup formats, the `expires_at` input formats, the reserved list (now including `metrics`) and the order of checks on create match the schema and service code.\n- **Behaviour:** the idempotency hash definition, deactivation taking precedence over expiry, the fact that expiry adds no database query, and the OpenAPI response lists (POST 409/422; GET and HEAD `/{code}` 410) all match.\n- **Migration:** the startup migration in `app/core/db.py` matches the docs: the exact SQL for SQLite/MySQL and PostgreSQL, the `app.migrations` log lines, tolerating a duplicate-column race, and failing startup on any other error.\n\n**What I changed:**\n- **README.md:** added a \"Current release: 1.1.0\" line and an \"Upgrading from 1.0.0\" section (automatic column add, manual SQL, migrate once before a multi-instance rollout, rollback is safe). The feature list, API-key security notice, configuration table, API table, curl examples and project layout were already accurate.\n- **docs/API.md:** now states version 1.1.0 and refers to 1.0.0 instead of \"pre-CR-142\" for links and idempotency hashes.\n- **docs/OPERATIONS.md:** now states version 1.1.0, with an upgrade pointer at the top. Migration rows, rollback, backup, log events and the metrics section now name 1.0.0/1.1.0 explicitly. The data model, MySQL case-insensitive collation caveat and corrected security notes were already there.\n- **CHANGELOG.md:** the CR-142 entries moved from `[Unreleased]` into a new `## [1.1.0]` section with a short summary; `[Unreleased]` is now empty. I left the date off to match the existing `[1.0.0]` heading. This goes against FR-14's wording (\"[Unreleased] has entries\") because you asked for release 1.1.0. I also added the request-hash definition to the idempotency entry. Sections are Added, Changed, Fixed (the docs wrongly said there was no authentication) and Investigated (BUG-77).\n\n**Needs someone else:**\n1. `app/main.py` still has `FastAPI(title=\"URL Shortener\", version=\"1.0.0\", ...)`, so `/openapi.json` reports `info.version` as 1.0.0. It should say \"1.1.0\", and that file is outside my write scope. The docs don't mention the OpenAPI version number, so they don't conflict with the code as it is.\n2. None of the planned CR-142 test files (`test_aliases.py`, `test_expiration.py`, `test_idempotency_cr142.py`, `test_bug77_url_validation.py`, `test_migration.py`, `test_query_count.py`) exist yet. If the test agent doesn't add them, the CHANGELOG line \"Regression tests were added\" is wrong.",
+    "files": [
+      "README.md",
+      "docs/API.md",
+      "docs/OPERATIONS.md",
+      "CHANGELOG.md"
+    ]
+  }
+}

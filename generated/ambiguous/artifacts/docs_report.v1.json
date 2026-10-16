@@ -1,0 +1,19 @@
+{
+  "name": "docs_report",
+  "version": 1,
+  "hash": "850848b9f7fa5de3",
+  "producer": "docs",
+  "derived_from": {
+    "requirements_spec": "177a1306cb37a92f",
+    "design": "4546f8f39faeb8aa"
+  },
+  "value": {
+    "summary": "I checked README.md, docs/API.md, docs/OPERATIONS.md and CHANGELOG.md against the code and made four small corrections. Most of the existing docs already matched. The existing 165 tests pass. No doc tests exist yet (the FR-20 README settings check and the NFR-20 runbook check), so they haven't been run against these docs.\n\n**Corrections:**\n- **API.md, auth order:** the docs said the API key is always checked before the body. That's wrong in one case. FastAPI rejects a body that isn't valid JSON with a 422 (`json_invalid`) before the key check. For every other request, a missing or wrong key still gets 401 before field, query or path validation and before any database lookup. I fixed the Authentication section and the PATCH order of checks.\n- **OPERATIONS.md, locking:** the runbook said lock contention only comes from multiple processes. Writes inside one process (clicks, creates, PATCH, DELETE) also queue on the write lock, usually for milliseconds. Long waits and timeouts point to another process or a sustained write burst.\n- **README:** added `python -m pytest -q -m \"not slow\"` to skip the slow performance tests.\n- **CHANGELOG:** kept the `[Unreleased]` heading (FR-20 requires it) and added a note that it ships as 1.2.0, with upgrade notes: back up first; the first start adds `links.expires_at` and switches SQLite to WAL; run one worker. On release, rename the heading to `[1.2.0] - <date>`.\n\n**What I confirmed matches the code (no changes needed):**\n- **Settings:** all 11 env vars are in the README table with the right defaults and ranges.\n- **Auth:** `X-API-Key` on `/api/links*`, 401 with `WWW-Authenticate: ApiKey`, fail-closed when `API_KEY` is unset, 16-character minimum. No doc says there is no authentication.\n- **HEAD probes:** both `/healthz` and `/readyz` are described, outside the OpenAPI schema.\n- **Expiry:**\n  - `expires_at` normalisation and 422 messages.\n  - Idempotency hashing, including replay of old keys.\n  - PATCH rules.\n  - Both 410 details, with deactivation taking precedence, and `no-store` on 404/410.\n  - Redirect 503 when the lookup itself fails.\n- **Hourly stats:** both-or-neither, default 25 buckets, 744-hour cap, range checked before the link lookup, every 422 detail string, and `%2B` encoding for `+`.\n- **Logs:** the `database tuning` fields and the schema-upgrade lines and outcome values match `app/core/schema.py`, `app/core/db.py` and `app/core/logging.py`.\n- **SQL and the click warning:** the manual ALTER statements, the MySQL collation DDL and the WARNING `failed to record click for link_id=<id> (<ExceptionClass>)` match the code.\n- **OPERATIONS.md sections:** WAL, backups, pool sizing, 'Campaign deployment' (UTC conversion examples re-checked, including +05:30) and 'Scaling beyond the campaign profile'.\n\n**Needs a code change outside my write scope:** `app/main.py` still has `FastAPI(..., version=\"1.0.0\")`, so `/openapi.json` reports 1.0.0. Owner of `app/main.py`: change it to `version=\"1.2.0\"` for this release.",
+    "files": [
+      "README.md",
+      "docs/API.md",
+      "docs/OPERATIONS.md",
+      "CHANGELOG.md"
+    ]
+  }
+}

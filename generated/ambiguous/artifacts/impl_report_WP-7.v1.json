@@ -1,0 +1,33 @@
+{
+  "name": "impl_report:WP-7",
+  "version": 1,
+  "hash": "dc72e8a682178d01",
+  "producer": "impl:WP-7",
+  "derived_from": {
+    "requirements_spec": "177a1306cb37a92f",
+    "design": "4546f8f39faeb8aa"
+  },
+  "value": {
+    "summary": "Rewrote README.md, docs/API.md and docs/OPERATIONS.md and added the CHANGELOG [Unreleased] section. The docs now match the design: API-key auth (X-API-Key header, 401 body, fail closed, 16-character minimum), all 11 settings, HEAD probes, SQLite WAL with backups and the corrected locking runbook, pool sizing, the automatic links.expires_at startup upgrade with its exact log messages and manual SQL, link expiry (POST and PATCH, is_expired, idempotency rules), the 410 'Link has expired' redirect with no-store, the hourly stats endpoint (range rules, 744-hour cap, zero-filled example, %2B encoding) and the MySQL utf8mb4_bin ALTER. OPERATIONS.md gains the 'Campaign deployment' and 'Scaling beyond the campaign profile' sections. No 'no authentication' statement remains. Caveat: WP-4/WP-6 code is not merged yet, so expiry, PATCH, hourly stats, the expired 410/no-store behaviour and the startup upgrade/tuning wiring are documented from the design and must be re-checked after merge. compileall passes and the existing tests pass.",
+    "files_changed": [
+      "README.md",
+      "docs/API.md",
+      "docs/OPERATIONS.md",
+      "CHANGELOG.md"
+    ],
+    "notes": [
+      "Checked against the merged code: Settings fields, ranges and API_KEY validators (app/core/config.py); require_api_key (401, WWW-Authenticate: ApiKey, fail closed) and the app.security startup WARNING text; ensure_links_expires_at log messages and literal ALTER statements (app/core/schema.py); describe_engine/log_engine_tuning fields (app/core/db.py); the logging extra fields; the HEAD probes (app/api/health.py); the schemas (expires_at, is_expired, LinkExpiryUpdate extra=forbid, hourly models).",
+      "Written from the design contract because WP-4/WP-6 are not merged: the redirect expiry 410 and no-store on 404/410, the WARNING click log line, PATCH, the hourly endpoint and its 422 detail strings, SQL daily aggregation, and main.py's pool settings and lifespan order (create_all, then ensure_links_expires_at, then log_engine_tuning).",
+      "The 1.0.0 CHANGELOG Security entry is rewritten in place as a corrected entry, on the assumption that the 1.0.0 code already had API-key auth (the code says version 1.0.0 and enforces it). The [Unreleased] Security section records the correction. If auth was actually added after 1.0.0, that entry should be reworded.",
+      "No document contains 'no authentication', 'without authentication' or 'unauthenticated' (checked by regex search). Every Settings env name appears in the README configuration table.",
+      "python -m compileall -q app succeeds; python -m pytest -q passes."
+    ],
+    "open_issues": [
+      "After WP-6 merges, check that app/main.py passes db_pool_size, db_max_overflow, db_pool_timeout_seconds and sqlite_busy_timeout_ms to create_db_engine and that the lifespan runs create_all, then ensure_links_expires_at, then log_engine_tuning. The startup steps and the pre-launch checklist in OPERATIONS.md depend on this.",
+      "After WP-4/WP-6 merge, check the documented strings against the code: 'expires_at must be in the future'; the hourly 422 details 'start and end must be supplied together', 'datetime out of range', 'start must be before end', 'range must not exceed 744 hours'; the WARNING 'failed to record click for link_id=%s (%s)'; and the redirect 404/410 Cache-Control: no-store.",
+      "Before launch, confirm the example campaign end 2025-12-31T23:59:00Z (year and time zone) with marketing.",
+      "Not tested: rolling back to the previous release (described as safe because it ignores the new column) and the PostgreSQL CSV copy steps in the scaling section.",
+      "The test that iterates over the Settings fields and checks each env name in README.md belongs to the test agent and is not written yet."
+    ]
+  }
+}

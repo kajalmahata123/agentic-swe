@@ -1,0 +1,78 @@
+{
+  "name": "security_review",
+  "version": 1,
+  "hash": "d552e2b70d463dc7",
+  "producer": "security_review",
+  "derived_from": {
+    "design": "69d249761c25951f",
+    "verification_report": "1fcc3d34fa554c92"
+  },
+  "value": {
+    "summary": "I found no critical issues. One finding is high severity: anyone can call the link-management endpoints without authenticating, and anyone who receives a short link can use its code to deactivate it. This must be fixed or blocked at the gateway before any public release. The other findings are defence-in-depth gaps or hardening suggestions.\n\nControls verified as correctly handled:\n- **URL schemes:** app/schemas/links.py:23-57 accepts only http/https targets, requires `://` and a host, and rejects control, whitespace and non-ASCII characters. `javascript:`, `data:`, `file:`, `ftp:`, scheme-relative and malformed-port URLs are all rejected.\n- **SQL injection:** every query uses the SQLAlchemy ORM with bound parameters. Malformed codes are rejected by the `^[A-Za-z0-9]{1,32}$` pattern before any query runs.\n- **Header injection:** the raw 307 `Location` value cannot carry CR/LF because control characters are rejected at input.\n- **Log injection:** the JSON formatter uses `json.dumps`, so line breaks in values cannot forge log lines.\n- **Short codes:** generated with `secrets` (a cryptographically secure generator), 62^7 possibilities, backed by a database unique constraint.\n- **Error handling:** errors always return generic JSON (`{\"detail\": ...}` with a fixed message). No stack traces or exception text reach clients, database errors return 503, and the middleware catches anything else.\n- **Secrets:** nothing is hard-coded and there is no module-level settings object.\n- **SSRF:** not possible, because the server never fetches the target URLs.\n- **Policy scan CMP-001 (client IP in app/api/redirect.py:48):** handled. The raw IP is passed only to `hash_ip()`, which stores an HMAC when `IP_HASH_SALT` is set and NULL otherwise. `click_events` has no raw-IP column, and the app's own logs never include the client address or any headers.\n- **Policy scan CHG-001 (requirements.txt):** all direct dependencies are pinned to exact versions. Remarks on transitive and dev dependencies are in SEC-7.",
+    "findings": [
+      {
+        "id": "SEC-1",
+        "severity": "high",
+        "title": "Mutating and analytics endpoints have no authentication: anyone holding a short link can deactivate it or read its stats",
+        "location": "app/api/links.py:27 (router has no auth dependency); app/api/links.py:103-113 (DELETE /api/links/{code}); app/api/links.py:116-137 (GET /api/links/{code}/stats); app/api/links.py:38 (POST /api/links)",
+        "recommendation": "Short codes are shared publicly by design, so their unpredictability does not act as access control. Add a router-level dependency on the /api/links router, e.g. `APIRouter(prefix='/api/links', dependencies=[Depends(require_api_key)])`. It should compare the key from a secret setting in constant time using `hmac.compare_digest`. Better still, return a per-link management token at creation, store only its hash, and require it for DELETE and stats. Keep GET/HEAD /{code} public. Until this ships, restrict /api/links* at the gateway or by network policy (OPERATIONS.md already says so) and treat this as a release blocker for any public exposure."
+      },
+      {
+        "id": "SEC-2",
+        "severity": "medium",
+        "title": "No rate limiting or request-size limits on link creation and redirects",
+        "location": "app/api/links.py:38-79 (POST /api/links); app/api/redirect.py:31-50 (GET /{code} click insert); app/main.py:43-55 (no limiting middleware)",
+        "recommendation": "Unauthenticated callers can create links in bulk for spam or phishing, inflate click counts, and grow the database without limit. On SQLite this also causes 'database is locked' errors that become 503s. Enforce per-client rate limits at the reverse proxy or API gateway: strict limits on POST /api/links, looser ones on /{code}. Cap the request body size, e.g. 8 KB, at the proxy or in middleware. Optionally add an app-level limiter keyed on the hashed IP or the API key so the protection does not depend on deployment."
+      },
+      {
+        "id": "SEC-3",
+        "severity": "medium",
+        "title": "Referrer and user agent are stored verbatim, kept forever, and referrers are shown to anyone holding the code",
+        "location": "app/services/link_service.py:185-186 (referrer/user_agent stored as sent); app/services/stats_service.py:70-73 and app/api/links.py:136 (all-time referrers returned by the unauthenticated stats endpoint); app/models/click_event.py (no retention)",
+        "recommendation": "Store less personal data. Reduce the referrer to its origin (scheme://host[:port]) or at least strip the query string and fragment before storing it, because full referrer URLs can carry personal data and tokens. Keep only a coarse user-agent family, or omit it unless a requirement needs it. Add a configurable retention purge for click_events, e.g. 90 days. Once SEC-1 is fixed, only the link owner should see referrers."
+      },
+      {
+        "id": "SEC-4",
+        "severity": "medium",
+        "title": "Keeping raw IPs out of logs depends on an operator remembering a CLI flag (--no-access-log)",
+        "location": "app/main.py:3-6 (docstring only); README.md:61-62; docs/OPERATIONS.md:23-28",
+        "recommendation": "If the service is started without `--no-access-log`, uvicorn's access log writes every client IP in plain text, which breaks the stated privacy guarantee. Make the safe behaviour the default in code: disable the 'uvicorn.access' logger in create_app() or the lifespan, e.g. `logging.getLogger('uvicorn.access').disabled = True`, or provide a programmatic entry point or container CMD that passes `access_log=False`. Also document that the proxy in front of the app must not log raw IPs, or must truncate them."
+      },
+      {
+        "id": "SEC-5",
+        "severity": "low",
+        "title": "IP pseudonymisation uses one long-lived key and the full IP, so hashes are linkable over time and brute-forceable if the salt leaks",
+        "location": "app/services/link_service.py:51-55 (hash_ip); app/core/config.py:26 and 28-34 (ip_hash_salt has no strength check)",
+        "recommendation": "Truncate the IP before hashing (IPv4 /24, IPv6 /48), or derive a rotating key such as HMAC(salt, date) so hashes cannot be correlated across days or links. Require a minimum salt length, e.g. at least 32 characters, when IP_HASH_SALT is set. Load it from a secret manager and never log the Settings object, which contains it."
+      },
+      {
+        "id": "SEC-6",
+        "severity": "low",
+        "title": "Target URLs with embedded credentials, self-referencing short URLs and internal hosts are accepted (phishing and redirect-loop abuse)",
+        "location": "app/schemas/links.py:52-57 (validate_target_url)",
+        "recommendation": "SSRF is not possible because the server never fetches targets, but the open-redirect and phishing surface can be reduced. Reject targets that contain userinfo (`parts.username` or `parts.password` set): they are deceptive, e.g. https://trusted.com@evil.example, and also expose credentials via GET /api/links/{code}. Reject targets whose host equals the BASE_URL host, which prevents redirect chains and loops. Optionally reject loopback, private and link-local literal IPs and add a domain denylist or reputation check. Keep deactivation as the takedown path."
+      },
+      {
+        "id": "SEC-7",
+        "severity": "low",
+        "title": "Transitive dependencies are unpinned and dev tools are mixed into runtime requirements",
+        "location": "requirements.txt:1-8",
+        "recommendation": "starlette, h11, anyio and pydantic-core are resolved at install time. FastAPI 0.115.6 pins Starlette 0.41.x, which has published DoS advisories: CVE-2025-54121 (multipart forms) and CVE-2025-62727 (Range header in FileResponse). Neither code path is reachable from this app, which has no form or file endpoints. Make sure h11 resolves to 0.16 or later (CVE-2025-43859). Produce a hash-pinned lock file (pip-compile --generate-hashes), run pip-audit in CI, plan a FastAPI/Starlette upgrade, and move pytest, pytest-cov and httpx into requirements-dev.txt."
+      },
+      {
+        "id": "SEC-8",
+        "severity": "low",
+        "title": "Idempotency keys are global, not tied to any client, and never expire",
+        "location": "app/services/link_service.py:89-92 and 107-116; app/models/idempotency_key.py",
+        "recommendation": "Any caller can probe whether a key has been used (a 409 reveals it), and the idempotency_keys table grows without limit. Once authentication exists (SEC-1), scope keys to the caller, e.g. a unique constraint on (client_id, key). Add a TTL purge, e.g. 24 hours."
+      },
+      {
+        "id": "SEC-9",
+        "severity": "low",
+        "title": "Hardening: API docs exposed by default, no security headers, http BASE_URL default",
+        "location": "app/main.py:43 (FastAPI() with default docs_url/openapi_url); app/core/config.py:24 (base_url default http://localhost:8000); app/core/middleware.py:23-40",
+        "recommendation": "Add a setting such as ENABLE_DOCS to turn off /docs, /redoc and /openapi.json in production. Add `X-Content-Type-Options: nosniff` to all responses. Consider `Referrer-Policy: no-referrer` on 307 responses so the short URL is not leaked to targets. Warn or fail at startup when BASE_URL is not https outside development."
+      }
+    ]
+  }
+}

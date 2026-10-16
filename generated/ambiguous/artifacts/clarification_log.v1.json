@@ -1,0 +1,52 @@
+{
+  "name": "clarification_log",
+  "version": 1,
+  "hash": "fa841e265b3cdc2a",
+  "producer": "clarify",
+  "derived_from": {
+    "requirements_spec": "d0ec50b9c24bbd54"
+  },
+  "value": {
+    "asked": [
+      {
+        "id": "Q-1",
+        "question": "What are the measurable campaign targets: expected peak redirect requests per second or concurrent visitors, the redirect latency target (p95/p99), and the availability goal during the campaign window?",
+        "answer": "Modest: up to about 50 RPS, p95 < 100 ms, best effort (one instance is enough)",
+        "by": "human:kajalmahata"
+      },
+      {
+        "id": "Q-2",
+        "question": "Which database and topology will serve the campaign in production: SQLite on one instance, or PostgreSQL/MySQL with several workers or replicas? If PostgreSQL, should we pin a driver (e.g. psycopg) in requirements.txt?",
+        "answer": "Keep the current SQLite backend and harden it (WAL, busy_timeout, configurable pool). Add no new driver. Document the move to PostgreSQL for multi-worker or campaign scale.",
+        "by": "human:kajalmahata"
+      }
+    ],
+    "defaults_assumed": [
+      {
+        "id": "Q-3",
+        "default": "Interpret trustworthy as: redirects that keep working under load, probes that tell the truth, bounded and accurate stats, case-correct matching on all backends, and docs that match the code. The other options are out of scope for this release."
+      },
+      {
+        "id": "Q-4",
+        "default": "No redirect cache in this release. Performance comes from WAL, the narrow lookup and pool sizing."
+      },
+      {
+        "id": "Q-5",
+        "default": "Keep it synchronous and best-effort, with lock waits bounded by SQLITE_BUSY_TIMEOUT_MS."
+      },
+      {
+        "id": "Q-6",
+        "default": "Keep the current counting semantics. Document that counts include automated GETs."
+      },
+      {
+        "id": "Q-7",
+        "default": "Default 5000 ms, which preserves current behaviour, configurable. OPERATIONS.md recommends 1000 ms for campaign traffic on SQLite."
+      },
+      {
+        "id": "Q-8",
+        "default": "Declare the binary collation in the model and document the DDL. No automatic migration."
+      }
+    ],
+    "answered_before": {}
+  }
+}

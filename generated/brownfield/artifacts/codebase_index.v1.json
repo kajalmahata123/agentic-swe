@@ -1,0 +1,722 @@
+{
+  "name": "codebase_index",
+  "version": 1,
+  "hash": "274d0ad173e248d2",
+  "producer": "codebase_scan",
+  "derived_from": {},
+  "value": {
+    "files": [
+      ".gitignore",
+      "CHANGELOG.md",
+      "README.md",
+      "app/__init__.py",
+      "app/api/__init__.py",
+      "app/api/deps.py",
+      "app/api/health.py",
+      "app/api/links.py",
+      "app/api/redirect.py",
+      "app/core/__init__.py",
+      "app/core/config.py",
+      "app/core/db.py",
+      "app/core/errors.py",
+      "app/core/logging.py",
+      "app/core/middleware.py",
+      "app/main.py",
+      "app/models/__init__.py",
+      "app/models/base.py",
+      "app/models/click_event.py",
+      "app/models/idempotency_key.py",
+      "app/models/link.py",
+      "app/repositories/__init__.py",
+      "app/repositories/click_repository.py",
+      "app/repositories/idempotency_repository.py",
+      "app/repositories/link_repository.py",
+      "app/schemas/__init__.py",
+      "app/schemas/health.py",
+      "app/schemas/links.py",
+      "app/services/__init__.py",
+      "app/services/codes.py",
+      "app/services/link_service.py",
+      "app/services/stats_service.py",
+      "docs/API.md",
+      "docs/OPERATIONS.md",
+      "requirements.txt",
+      "tests/conftest.py",
+      "tests/helpers.py",
+      "tests/test_auth.py",
+      "tests/test_codes.py",
+      "tests/test_config_openapi_architecture.py",
+      "tests/test_create_and_validation.py",
+      "tests/test_health_and_errors.py",
+      "tests/test_idempotency.py",
+      "tests/test_lookup_and_deactivate.py",
+      "tests/test_redirect_and_clicks.py",
+      "tests/test_stats.py"
+    ],
+    "python_loc": 3284,
+    "modules": {
+      "app/__init__.py": {
+        "classes": [],
+        "functions": [],
+        "layer": "other"
+      },
+      "app/api/__init__.py": {
+        "classes": [],
+        "functions": [],
+        "layer": "api"
+      },
+      "app/api/deps.py": {
+        "classes": [],
+        "functions": [
+          "get_settings",
+          "require_api_key",
+          "get_link_service",
+          "get_stats_service",
+          "build_short_url"
+        ],
+        "layer": "api"
+      },
+      "app/api/health.py": {
+        "classes": [],
+        "functions": [
+          "healthz",
+          "readyz"
+        ],
+        "layer": "api"
+      },
+      "app/api/links.py": {
+        "classes": [],
+        "functions": [
+          "create_link",
+          "get_link",
+          "deactivate_link",
+          "get_stats"
+        ],
+        "layer": "api"
+      },
+      "app/api/redirect.py": {
+        "classes": [],
+        "functions": [
+          "_redirect_response",
+          "redirect",
+          "redirect_head"
+        ],
+        "layer": "api"
+      },
+      "app/core/__init__.py": {
+        "classes": [],
+        "functions": [],
+        "layer": "core"
+      },
+      "app/core/config.py": {
+        "classes": [
+          "Settings"
+        ],
+        "functions": [],
+        "layer": "core"
+      },
+      "app/core/db.py": {
+        "classes": [],
+        "functions": [
+          "create_db_engine",
+          "create_session_factory",
+          "get_db"
+        ],
+        "layer": "core"
+      },
+      "app/core/errors.py": {
+        "classes": [
+          "AppError",
+          "BadRequestError",
+          "NotFoundError",
+          "ConflictError",
+          "GoneError",
+          "ServiceUnavailableError"
+        ],
+        "functions": [
+          "_app_error_handler",
+          "_http_exception_handler",
+          "_validation_error_handler",
+          "_sqlalchemy_error_handler",
+          "_unhandled_exception_handler",
+          "register_exception_handlers"
+        ],
+        "layer": "core"
+      },
+      "app/core/logging.py": {
+        "classes": [
+          "JsonFormatter"
+        ],
+        "functions": [
+          "configure_logging"
+        ],
+        "layer": "core"
+      },
+      "app/core/middleware.py": {
+        "classes": [
+          "RequestLoggingMiddleware"
+        ],
+        "functions": [],
+        "layer": "core"
+      },
+      "app/main.py": {
+        "classes": [],
+        "functions": [
+          "create_app"
+        ],
+        "layer": "other"
+      },
+      "app/models/__init__.py": {
+        "classes": [],
+        "functions": [],
+        "layer": "models"
+      },
+      "app/models/base.py": {
+        "classes": [
+          "Base"
+        ],
+        "functions": [
+          "utcnow"
+        ],
+        "layer": "models"
+      },
+      "app/models/click_event.py": {
+        "classes": [
+          "ClickEvent"
+        ],
+        "functions": [],
+        "layer": "models"
+      },
+      "app/models/idempotency_key.py": {
+        "classes": [
+          "IdempotencyKey"
+        ],
+        "functions": [],
+        "layer": "models"
+      },
+      "app/models/link.py": {
+        "classes": [
+          "Link"
+        ],
+        "functions": [],
+        "layer": "models"
+      },
+      "app/repositories/__init__.py": {
+        "classes": [],
+        "functions": [],
+        "layer": "repositories"
+      },
+      "app/repositories/click_repository.py": {
+        "classes": [
+          "ClickRepository"
+        ],
+        "functions": [],
+        "layer": "repositories"
+      },
+      "app/repositories/idempotency_repository.py": {
+        "classes": [
+          "IdempotencyRepository"
+        ],
+        "functions": [],
+        "layer": "repositories"
+      },
+      "app/repositories/link_repository.py": {
+        "classes": [
+          "LinkRepository"
+        ],
+        "functions": [],
+        "layer": "repositories"
+      },
+      "app/schemas/__init__.py": {
+        "classes": [],
+        "functions": [],
+        "layer": "schemas"
+      },
+      "app/schemas/health.py": {
+        "classes": [
+          "HealthResponse"
+        ],
+        "functions": [],
+        "layer": "schemas"
+      },
+      "app/schemas/links.py": {
+        "classes": [
+          "LinkCreate",
+          "LinkCreatedResponse",
+          "LinkDetailResponse",
+          "DailyClicks",
+          "ReferrerCount",
+          "LinkStatsResponse",
+          "ErrorResponse"
+        ],
+        "functions": [
+          "_is_forbidden_char",
+          "validate_target_url",
+          "_as_utc"
+        ],
+        "layer": "schemas"
+      },
+      "app/services/__init__.py": {
+        "classes": [],
+        "functions": [],
+        "layer": "services"
+      },
+      "app/services/codes.py": {
+        "classes": [],
+        "functions": [
+          "generate_code",
+          "is_reserved",
+          "is_valid_code_format"
+        ],
+        "layer": "services"
+      },
+      "app/services/link_service.py": {
+        "classes": [
+          "CreateResult",
+          "LinkDetail",
+          "LinkService"
+        ],
+        "functions": [
+          "hash_ip"
+        ],
+        "layer": "services"
+      },
+      "app/services/stats_service.py": {
+        "classes": [
+          "LinkStats",
+          "StatsService"
+        ],
+        "functions": [],
+        "layer": "services"
+      },
+      "tests/conftest.py": {
+        "classes": [],
+        "functions": [
+          "pytest_configure",
+          "make_client",
+          "client"
+        ],
+        "layer": "tests"
+      },
+      "tests/helpers.py": {
+        "classes": [],
+        "functions": [
+          "new_session",
+          "count_rows",
+          "create_link",
+          "assert_json_error"
+        ],
+        "layer": "tests"
+      },
+      "tests/test_auth.py": {
+        "classes": [],
+        "functions": [
+          "_management_calls",
+          "test_management_endpoints_reject_missing_or_wrong_key",
+          "test_valid_key_allows_full_management_flow",
+          "test_redirect_and_probes_stay_public",
+          "test_unconfigured_api_key_fails_closed",
+          "test_api_key_setting_from_env_and_validation",
+          "test_api_key_is_not_logged",
+          "test_openapi_documents_api_key_security"
+        ],
+        "layer": "tests"
+      },
+      "tests/test_codes.py": {
+        "classes": [],
+        "functions": [
+          "_scripted",
+          "test_generated_codes_match_base62_7_by_default",
+          "test_generate_code_unit_and_helpers",
+          "test_code_length_is_configurable",
+          "test_links_code_has_unique_constraint_and_duplicate_raises",
+          "test_idempotency_key_has_unique_constraint_and_duplicate_raises",
+          "test_forced_collision_retries_with_fresh_code",
+          "test_all_attempts_collide_returns_503_without_traceback",
+          "test_max_attempts_is_configurable",
+          "test_reserved_candidate_is_discarded",
+          "test_reserved_only_candidates_exhaust_to_503",
+          "test_1000_links_have_unique_codes"
+        ],
+        "layer": "tests"
+      },
+      "tests/test_config_openapi_architecture.py": {
+        "classes": [],
+        "functions": [
+          "_py_files",
+          "_imported_modules",
+          "test_tables_created_at_startup_with_temp_sqlite",
+          "test_indexes_and_unique_constraints_exist",
+          "test_short_url_uses_configured_base_url",
+          "test_settings_defaults_and_env",
+          "test_settings_reject_invalid_values",
+          "test_env_configured_app_serves_requests",
+          "test_main_exposes_create_app_and_module_app",
+          "test_orm_uses_declarative_base_and_portable_types",
+          "test_openapi_lists_endpoints_and_named_schemas",
+          "test_no_random_module_and_codes_use_secrets",
+          "test_no_dynamic_code_execution_or_shell_subprocess",
+          "test_sql_text_only_receives_literal_strings",
+          "test_layered_architecture_dependencies_point_inward",
+          "test_no_module_level_settings_or_caches_and_pinned_requirements",
+          "_p95",
+          "test_performance_p95_redirect_and_create"
+        ],
+        "layer": "tests"
+      },
+      "tests/test_create_and_validation.py": {
+        "classes": [],
+        "functions": [
+          "test_create_link_returns_201_with_metadata",
+          "test_create_link_sets_location_header",
+          "test_same_url_twice_without_key_creates_two_links",
+          "test_get_after_create_returns_same_metadata",
+          "test_url_is_stored_unchanged",
+          "test_invalid_body_returns_422",
+          "test_valid_urls_are_accepted",
+          "test_url_length_boundary",
+          "test_invalid_urls_return_422_and_persist_nothing",
+          "test_validate_target_url_unit"
+        ],
+        "layer": "tests"
+      },
+      "tests/test_health_and_errors.py": {
+        "classes": [],
+        "functions": [
+          "test_healthz_ok_without_database",
+          "test_readyz_ok",
+          "test_readyz_db_failure_returns_503_without_exception_text",
+          "test_readyz_session_dependency_raising_returns_503",
+          "test_probes_not_shadowed_by_redirect_route",
+          "test_error_statuses_are_json_with_detail",
+          "test_unknown_api_routes_return_404_json",
+          "test_unhandled_exception_in_route_returns_generic_500",
+          "test_unhandled_exception_in_service_returns_generic_500",
+          "test_database_error_in_route_returns_503",
+          "test_request_log_line_has_method_path_status_duration",
+          "test_json_formatter_emits_single_json_line",
+          "test_configure_logging_is_idempotent_and_sets_level"
+        ],
+        "layer": "tests"
+      },
+      "tests/test_idempotency.py": {
+        "classes": [],
+        "functions": [
+          "_post",
+          "test_same_key_same_body_replays_identical_response",
+          "test_replay_header_only_on_replayed_response",
+          "test_same_key_different_url_returns_409",
+          "test_invalid_idempotency_key_rejected",
+          "test_idempotency_key_of_255_chars_accepted",
+          "test_different_keys_same_body_create_distinct_links",
+          "test_requests_without_key_unaffected_by_keyed_requests",
+          "test_replay_of_deactivated_link_returns_stored_state",
+          "test_concurrent_race_loser_replays_winner",
+          "test_concurrent_race_loser_with_different_payload_gets_409",
+          "test_race_with_unreadable_winner_returns_409_not_500",
+          "test_idempotency_row_links_to_created_link"
+        ],
+        "layer": "tests"
+      },
+      "tests/test_lookup_and_deactivate.py": {
+        "classes": [],
+        "functions": [
+          "_parse",
+          "test_lookup_active_link_full_shape",
+          "test_lookup_total_clicks_counts_redirects",
+          "test_lookup_deactivated_link_still_returned",
+          "test_lookup_unknown_code_returns_404",
+          "test_lookup_malformed_code_returns_404_not_500",
+          "test_delete_active_link_soft_deletes",
+          "test_delete_stops_redirects",
+          "test_delete_is_idempotent_and_keeps_deactivated_at",
+          "test_delete_unknown_returns_404",
+          "test_clicks_survive_deactivation_and_appear_in_stats"
+        ],
+        "layer": "tests"
+      },
+      "tests/test_redirect_and_clicks.py": {
+        "classes": [],
+        "functions": [
+          "_events",
+          "test_redirect_returns_307_with_exact_location",
+          "test_redirect_location_not_requoted",
+          "test_redirect_sets_no_store_cache_control",
+          "test_redirect_unknown_code_returns_404_json",
+          "test_redirect_malformed_code_returns_404",
+          "test_redirect_deactivated_returns_410_and_no_redirect",
+          "test_head_behaves_like_get_without_recording_click",
+          "test_n_redirects_create_n_click_events",
+          "test_click_event_stores_timestamp_referrer_and_user_agent",
+          "test_click_event_null_when_headers_absent",
+          "test_oversized_headers_are_truncated",
+          "test_404_and_410_do_not_create_click_events",
+          "test_click_events_have_no_raw_ip_column",
+          "test_ip_hash_null_without_salt_and_ip_never_stored",
+          "test_ip_hash_is_hmac_sha256_with_salt",
+          "test_blank_salt_means_no_hash",
+          "test_hash_ip_unit",
+          "test_click_recording_failure_still_redirects_and_logs"
+        ],
+        "layer": "tests"
+      },
+      "tests/test_stats.py": {
+        "classes": [],
+        "functions": [
+          "_link_id",
+          "_insert_clicks",
+          "test_stats_shape_and_empty_link",
+          "test_stats_after_redirects",
+          "test_day_bucketing_across_utc_midnight",
+          "test_clicks_per_day_sorted_and_windowed",
+          "test_days_out_of_range_returns_422",
+          "test_top_referrers_ordering_and_null_grouping",
+          "test_top_referrers_limited_to_10",
+          "test_stats_available_for_deactivated_link",
+          "test_stats_unknown_code_returns_404",
+          "test_stats_counts_only_own_link",
+          "test_stats_service_with_fixed_now_buckets_by_utc_date"
+        ],
+        "layer": "tests"
+      }
+    },
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/healthz",
+        "handler": "healthz",
+        "file": "app/api/health.py"
+      },
+      {
+        "method": "GET",
+        "path": "/readyz",
+        "handler": "readyz",
+        "file": "app/api/health.py"
+      },
+      {
+        "method": "POST",
+        "path": "",
+        "handler": "create_link",
+        "file": "app/api/links.py"
+      },
+      {
+        "method": "GET",
+        "path": "/{code}",
+        "handler": "get_link",
+        "file": "app/api/links.py"
+      },
+      {
+        "method": "DELETE",
+        "path": "/{code}",
+        "handler": "deactivate_link",
+        "file": "app/api/links.py"
+      },
+      {
+        "method": "GET",
+        "path": "/{code}/stats",
+        "handler": "get_stats",
+        "file": "app/api/links.py"
+      },
+      {
+        "method": "GET",
+        "path": "/{code}",
+        "handler": "redirect",
+        "file": "app/api/redirect.py"
+      }
+    ],
+    "orm_models": [
+      {
+        "class": "ClickEvent",
+        "table": "click_events",
+        "file": "app/models/click_event.py",
+        "columns": [
+          "id: Mapped[int]",
+          "link_id: Mapped[int]",
+          "created_at: Mapped[datetime]",
+          "referrer: Mapped[str | None]",
+          "user_agent: Mapped[str | None]",
+          "ip_hash: Mapped[str | None]"
+        ]
+      },
+      {
+        "class": "IdempotencyKey",
+        "table": "idempotency_keys",
+        "file": "app/models/idempotency_key.py",
+        "columns": [
+          "id: Mapped[int]",
+          "key: Mapped[str]",
+          "request_hash: Mapped[str]",
+          "link_id: Mapped[int]",
+          "created_at: Mapped[datetime]"
+        ]
+      },
+      {
+        "class": "Link",
+        "table": "links",
+        "file": "app/models/link.py",
+        "columns": [
+          "id: Mapped[int]",
+          "code: Mapped[str]",
+          "url: Mapped[str]",
+          "is_active: Mapped[bool]",
+          "created_at: Mapped[datetime]",
+          "deactivated_at: Mapped[datetime | None]"
+        ]
+      }
+    ],
+    "internal_imports": {
+      "app/__init__.py": [],
+      "app/api/__init__.py": [],
+      "app/api/deps.py": [
+        "app.core.config",
+        "app.core.db",
+        "app.services.link_service",
+        "app.services.stats_service"
+      ],
+      "app/api/health.py": [
+        "app.core.db",
+        "app.core.errors",
+        "app.schemas"
+      ],
+      "app/api/links.py": [
+        "app.api.deps",
+        "app.core.config",
+        "app.schemas",
+        "app.services.link_service",
+        "app.services.stats_service"
+      ],
+      "app/api/redirect.py": [
+        "app.api.deps",
+        "app.schemas",
+        "app.services.link_service"
+      ],
+      "app/core/__init__.py": [],
+      "app/core/config.py": [],
+      "app/core/db.py": [],
+      "app/core/errors.py": [],
+      "app/core/logging.py": [],
+      "app/core/middleware.py": [],
+      "app/main.py": [
+        "app.api",
+        "app.core.config",
+        "app.core.db",
+        "app.core.errors",
+        "app.core.logging",
+        "app.core.middleware",
+        "app.models"
+      ],
+      "app/models/__init__.py": [
+        "app.models.base",
+        "app.models.click_event",
+        "app.models.idempotency_key",
+        "app.models.link"
+      ],
+      "app/models/base.py": [],
+      "app/models/click_event.py": [
+        "app.models.base"
+      ],
+      "app/models/idempotency_key.py": [
+        "app.models.base"
+      ],
+      "app/models/link.py": [
+        "app.models.base"
+      ],
+      "app/repositories/__init__.py": [
+        "app.repositories.click_repository",
+        "app.repositories.idempotency_repository",
+        "app.repositories.link_repository"
+      ],
+      "app/repositories/click_repository.py": [
+        "app.models.click_event"
+      ],
+      "app/repositories/idempotency_repository.py": [
+        "app.models.idempotency_key"
+      ],
+      "app/repositories/link_repository.py": [
+        "app.models.link"
+      ],
+      "app/schemas/__init__.py": [
+        "app.schemas.health",
+        "app.schemas.links"
+      ],
+      "app/schemas/health.py": [],
+      "app/schemas/links.py": [],
+      "app/services/__init__.py": [],
+      "app/services/codes.py": [],
+      "app/services/link_service.py": [
+        "app.core.errors",
+        "app.models",
+        "app.repositories",
+        "app.services"
+      ],
+      "app/services/stats_service.py": [
+        "app.core.errors",
+        "app.models",
+        "app.repositories",
+        "app.services"
+      ],
+      "tests/conftest.py": [
+        "app.core.config",
+        "app.main"
+      ],
+      "tests/helpers.py": [],
+      "tests/test_auth.py": [
+        "app.core.config",
+        "app.models"
+      ],
+      "tests/test_codes.py": [
+        "app.models",
+        "app.services"
+      ],
+      "tests/test_config_openapi_architecture.py": [
+        "app.core.config",
+        "app.main",
+        "app.models"
+      ],
+      "tests/test_create_and_validation.py": [
+        "app.models",
+        "app.schemas.links"
+      ],
+      "tests/test_health_and_errors.py": [
+        "app.core.db",
+        "app.core.logging",
+        "app.services.link_service"
+      ],
+      "tests/test_idempotency.py": [
+        "app.models",
+        "app.repositories.idempotency_repository"
+      ],
+      "tests/test_lookup_and_deactivate.py": [
+        "app.models"
+      ],
+      "tests/test_redirect_and_clicks.py": [
+        "app.models",
+        "app.repositories.click_repository",
+        "app.services.link_service"
+      ],
+      "tests/test_stats.py": [
+        "app.models",
+        "app.services.stats_service"
+      ]
+    },
+    "tests": [
+      "tests/conftest.py",
+      "tests/helpers.py",
+      "tests/test_auth.py",
+      "tests/test_codes.py",
+      "tests/test_config_openapi_architecture.py",
+      "tests/test_create_and_validation.py",
+      "tests/test_health_and_errors.py",
+      "tests/test_idempotency.py",
+      "tests/test_lookup_and_deactivate.py",
+      "tests/test_redirect_and_clicks.py",
+      "tests/test_stats.py"
+    ],
+    "baseline_tests": {
+      "passed": 165,
+      "failed": 0,
+      "errors": 0,
+      "coverage": 99.19
+    }
+  }
+}

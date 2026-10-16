@@ -1,0 +1,28 @@
+{
+  "name": "impl_report:WP-4",
+  "version": 1,
+  "hash": "bfbe6999c6168a53",
+  "producer": "impl:WP-4",
+  "derived_from": {
+    "requirements_spec": "f9e39c09ed667d11",
+    "design": "69d249761c25951f"
+  },
+  "value": {
+    "summary": "I wrote WP-4, the service layer, in the 4 files I own. `python -m compileall -q app` passes and ruff reports nothing in `app/services`. No tests exist yet, so none of this logic has been run: pytest stopped with exit code 5 because it collected no tests. The services don't import fastapi or starlette, and they commit and roll back their own transactions.\n\n- **`codes.py`**: `generate_code` builds codes from the base62 alphabet using `secrets` (never `random`). It also holds the reserved-word check (case-insensitive) and the code-format check (`^[A-Za-z0-9]{1,32}$`).\n- **`link_service.py`**: `LinkService` handles create, lookup, deactivate and redirect, plus the `CreateResult` / `LinkDetail` result types and `hash_ip`.\n  - Creating a link validates the Idempotency-Key, hashes the URL with SHA-256, and replays the stored link or returns 409 if the key was used before.\n  - It then tries up to `max_attempts` codes: reserved codes are skipped, a duplicate code rolls back and retries, and the key row is written in the same transaction as the link. If another request inserted the same key first, it re-reads the key and replays or returns 409. When attempts run out it logs an error and returns 503.\n  - `codes.generate_code` is called through the module, so tests can monkeypatch it.\n  - Deactivating an already-inactive link changes nothing, so `deactivated_at` stays the same.\n  - Click recording is best-effort: it truncates the referrer (2048) and user agent (512), stores an HMAC of the IP only when a salt is set, and on any error rolls back, logs without the IP, and still returns the URL.\n- **`stats_service.py`**: `StatsService.get_stats` returns `LinkStats`. Per-day counts are grouped in Python by UTC day over a window of `days` days ending today. Referrers are sorted by count descending, then referrer ascending with null last on ties, and capped at 10. Deactivated links are allowed; a malformed or unknown code gives 404.\n- **`__init__.py`**: left empty, as the design specifies.",
+    "files_changed": [
+      "app/services/__init__.py",
+      "app/services/codes.py",
+      "app/services/link_service.py",
+      "app/services/stats_service.py"
+    ],
+    "notes": [
+      "Small additions beyond the spec: in `resolve_and_record_click`, the link's id and URL are read before the insert. After a rollback the link object is expired, so reading `link.id` in the log call would need a fresh DB query, which could fail again during a DB outage.",
+      "Small additions beyond the spec: `_replay_or_conflict` returns 409 'Idempotency-Key conflict, please retry' if the stored link can't be found. The foreign key should make that impossible; the check just keeps the return type a real link and avoids crashing on a missing one.",
+      "If `get_stats` gets a timezone-aware `now`, it is converted to UTC and the timezone is stripped. A naive `now` is treated as UTC as-is.",
+      "The services import `app.core.errors`, which itself imports FastAPI. The services' own modules never import fastapi or starlette, as ADR-1 intends."
+    ],
+    "open_issues": [
+      "None of this has been run. WP-5 (routers, `app/main.py`) and the test agent's suite need to exercise it from start to finish."
+    ]
+  }
+}

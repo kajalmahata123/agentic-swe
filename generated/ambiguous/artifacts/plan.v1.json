@@ -1,0 +1,39 @@
+{
+  "name": "plan",
+  "version": 1,
+  "hash": "954abf3a6ef84599",
+  "producer": "plan",
+  "derived_from": {
+    "design": "4546f8f39faeb8aa",
+    "requirements_spec": "177a1306cb37a92f"
+  },
+  "value": {
+    "work_packages": [
+      "WP-1",
+      "WP-2",
+      "WP-3",
+      "WP-4",
+      "WP-5",
+      "WP-6",
+      "WP-7"
+    ],
+    "waves": [
+      [
+        "WP-1",
+        "WP-3",
+        "WP-5"
+      ],
+      [
+        "WP-2",
+        "WP-7"
+      ],
+      [
+        "WP-4"
+      ],
+      [
+        "WP-6"
+      ]
+    ],
+    "max_parallelism": 3
+  }
+}

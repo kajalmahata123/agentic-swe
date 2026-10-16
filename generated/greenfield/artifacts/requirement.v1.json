@@ -1,0 +1,14 @@
+{
+  "name": "requirement",
+  "version": 1,
+  "hash": "5ee67f561141fd3d",
+  "producer": "intake",
+  "derived_from": {},
+  "value": {
+    "text": "Build a production-ready URL shortener HTTP service.\n\nCore API\n- Create a short link for a long URL; respond with the short code, the full short URL and metadata.\n- Visiting the short URL redirects (HTTP 307) to the original URL; unknown codes return 404.\n- Look up a link's metadata by code, and deactivate (soft-delete) a link; deactivated links stop redirecting.\n\nAnalytics\n- Record each redirect as a click event: timestamp, referrer and user agent.\n- Per-link stats endpoint: total clicks, clicks per day (UTC) and top referrers.\n- Privacy: never store raw client IP addresses (store only a salted hash, or nothing).\n\nReliability\n- Validate URLs: http/https only, max 2048 characters, reject other schemes (javascript:, data:, file:).\n- Short codes are random, URL-safe and collision-safe (retry on collision, unique constraint in the DB).\n- Creation is idempotent when the client sends an `Idempotency-Key` header.\n- Liveness (/healthz) and readiness (/readyz, checks the database) endpoints.\n- Consistent JSON error responses; no stack traces leak to clients.\n\nPersistence: relational database via SQLAlchemy \u2014 SQLite by default, configurable via DATABASE_URL.",
+    "scenario": "greenfield",
+    "amendments": [],
+    "clarifications": {},
+    "clarification_rounds": 0
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "name": "security_review",
+  "version": 1,
+  "hash": "9bcf74ee0d7da238",
+  "producer": "security_review",
+  "derived_from": {
+    "design": "4546f8f39faeb8aa",
+    "verification_report": "1e8b79d71d6dca2b"
+  },
+  "value": {
+    "summary": "Read-only security review of the merged service at 54020f9 (campaign hardening, link expiry, PATCH expiry, hourly stats, HEAD probes, WAL). I found no critical or high issues. There are 2 medium findings and 4 low ones.\n\nAlready handled correctly:\n- **URL schemes:** only absolute http/https targets with a host are accepted. Whitespace, control and non-ASCII characters are rejected, so javascript:, data: and file: targets are impossible, and so is CRLF/header injection through the Location header (schemas/links.py validate_target_url). PATCH cannot change the url.\n- **Open redirect and SSRF:** the service never fetches target URLs, so there is no SSRF. Open-redirect abuse needs the API key to create links, and takedown is DELETE, which takes effect immediately with no-store on 307/404/410.\n- **SQL injection:** every query is a bound ORM expression. Only constant SQL goes through text, exec_driver_sql and literal_column (PRAGMAs, ALTER TABLE, bucket formats). The busy timeout uses the sqlite3 timeout connect arg, not a formatted PRAGMA. Malformed codes get a 404 before any SQL runs.\n- **Authentication:** every /api/links* route, including the new PATCH and /stats/hourly, has a router-level X-API-Key check. It uses hmac.compare_digest, fails closed when API_KEY is unset, keeps the key as a SecretStr with a 16-character minimum, and returns 401 with WWW-Authenticate. Redirects and probes are public by design.\n- **Error handling:** domain, validation, SQLAlchemy and unhandled errors all return {\"detail\": ...} with no stack trace or SQL. The redirect 404/410 responses carry no-store. HEAD /readyz returns a generic 503.\n- **Logging:** logs are JSON, so path-based log injection is neutralised. The click-failure WARNING logs only link_id and the exception class, with no IP and no message. The startup tuning line never includes the URL. IPs are never stored raw (an HMAC is stored only when IP_HASH_SALT is set).\n- **Input bounds:** hourly ranges are capped at 744 h, datetime overflow becomes a 422, numbers and booleans are rejected for expires_at, and days is limited to 1..365.\n- **Startup:** the schema upgrade is idempotent and aborts startup on failure.\n\nNote on policy finding CHG-001: requirements.txt was flagged as a protected path change. Its content matches the design's pinned list exactly and adds no new packages, so it only needs the usual human approval. Findings SEC-1 to SEC-6 follow.",
+    "findings": [
+      {
+        "id": "SEC-1",
+        "severity": "medium",
+        "title": "No built-in rate limiting: each unauthenticated GET /{code} writes a row (DB growth, write-lock contention, inflated campaign stats), and the campaign pre-launch checklist does not require gateway rate limits",
+        "location": "app/api/redirect.py:61-75 (redirect -> LinkService.resolve_and_record_click, app/services/link_service.py:280-312); docs/OPERATIONS.md:599 and :761 (Pre-launch checklist)",
+        "recommendation": "Before the campaign, enforce per-client rate limits at the reverse proxy or gateway:\n- On the public redirect (e.g. a per-IP burst limit that still allows legitimate TV-spike traffic).\n- On repeated 401s on /api/links*.\n- A request body size limit (e.g. 16 KB) for /api/links.\nAdd an explicit 'gateway rate limiting and body-size limit configured and tested' item to the Campaign deployment pre-launch checklist. Without it, one client can insert clicks of up to ~2.5 KB each (referrer plus user agent) without limit. That fills the local disk, takes the single SQLite write lock so legitimate clicks are dropped, and skews the per-slot hourly numbers. Optionally, add a cheap in-app guard later (e.g. skip recording clicks while the per-process insert rate exceeds a threshold)."
+      },
+      {
+        "id": "SEC-2",
+        "severity": "medium",
+        "title": "Personal data minimisation: full Referer URLs (including query strings) and raw User-Agent strings are stored indefinitely with no retention mechanism",
+        "location": "app/services/link_service.py:299-300; app/models/click_event.py (referrer String(2048), user_agent String(512)); docs/OPERATIONS.md:498-524 (Retention: nothing ever deleted)",
+        "recommendation": "Store only what the stats use:\n- Reduce the referrer to its origin (scheme://host) before storing it. top_referrers works at origin granularity, and query strings often carry emails, session or campaign tokens.\n- Either drop user_agent or reduce it to a coarse family/class, since nothing in the API reads it.\n\nAdd a documented, scheduled retention purge for click_events (e.g. 90-180 days, configurable), and record the legal basis in the DPIA. Combined with a stable ip_hash, the current raw UA plus full referrer kept forever makes clicks linkable to individuals. For IP_HASH_SALT, document periodic rotation to limit long-term linkability."
+      },
+      {
+        "id": "SEC-3",
+        "severity": "low",
+        "title": "The database error handler logs full SQLAlchemy exceptions, whose text includes bound parameters (target URL, idempotency key, codes)",
+        "location": "app/core/errors.py:86 (_sqlalchemy_error_handler logger.exception); app/core/db.py:62/67/92 (create_engine calls)",
+        "recommendation": "Pass hide_parameters=True to all three create_engine calls in create_db_engine. SQLAlchemy then omits '[parameters: ...]' from exception messages and the logged tracebacks. This keeps the server-side 'database error' log consistent with the documented promise that request bodies are never logged. The design already took this approach for the click-failure WARNING."
+      },
+      {
+        "id": "SEC-4",
+        "severity": "low",
+        "title": "IP_HASH_SALT (and DATABASE_URL, which may carry credentials) are plain str settings, so they appear in repr() and any accidental Settings dump",
+        "location": "app/core/config.py:24 (database_url), app/core/config.py:28 (ip_hash_salt)",
+        "recommendation": "Declare ip_hash_salt as SecretStr | None and read it with get_secret_value() in get_link_service (app/api/deps.py), the same way api_key is handled. Consider SecretStr for database_url too, or at least make sure Settings is never logged. Anyone holding the salt can brute-force IPv4 addresses from ip_hash, so it deserves the same treatment as the API key."
+      },
+      {
+        "id": "SEC-5",
+        "severity": "low",
+        "title": "Interactive API docs and the OpenAPI schema are public, and responses lack basic hardening headers",
+        "location": "app/main.py:70 (FastAPI(...) with default docs_url, redoc_url and openapi_url)",
+        "recommendation": "Either disable /docs, /redoc and /openapi.json in production through a setting (e.g. docs_url=None, openapi_url=None unless an ENABLE_DOCS flag is set), or restrict them at the proxy. At the proxy, add X-Content-Type-Options: nosniff and Strict-Transport-Security. The OpenAPI schema lists every management endpoint and the API-key header name, which makes probing easier for attackers. Also bind uvicorn to 127.0.0.1 or a private interface behind the TLS proxy, rather than 0.0.0.0 as in the runbook examples."
+      },
+      {
+        "id": "SEC-6",
+        "severity": "low",
+        "title": "Runtime requirements include test tooling, and transitive dependencies (starlette, h11, anyio, pydantic-core) are not locked",
+        "location": "requirements.txt:6-8 (httpx, pytest, pytest-cov)",
+        "recommendation": "Split dependencies into requirements.txt (runtime) and requirements-dev.txt (pytest, pytest-cov, httpx), so production images do not ship test tooling. Add a hash-locked constraints file (e.g. pip-compile --generate-hashes) that pins the transitive packages. Make sure h11 >= 0.16.0 is installed (CVE-2025-43859, request smuggling in uvicorn's h11 backend). Track the starlette range that fastapi 0.115.6 allows (<0.42): the known multipart and FileResponse CVEs do not affect this app, which uses neither, but plan a FastAPI upgrade."
+      }
+    ]
+  }
+}

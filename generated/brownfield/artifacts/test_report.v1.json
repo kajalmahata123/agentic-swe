@@ -1,0 +1,184 @@
+{
+  "name": "test_report",
+  "version": 1,
+  "hash": "014cc9b0654790a0",
+  "producer": "tests",
+  "derived_from": {
+    "requirements_spec": "a29fdf7abe9a8b61",
+    "design": "c09f3c47030c55ea"
+  },
+  "value": {
+    "summary": "I added 5 test files covering CR-142 and BUG-77, about 205 new test cases in all. Every test in `tests/` passes, both the new ones and the pre-existing ones. I found no product defects.\n\n**How I ran it:** I didn't get a single complete `python -m pytest -q --cov=app` run. That command timed out at 300 s. Running pytest from the workspace root also collected tests from the `.sdlc/runs/*/worktrees` copies, which is the likely cause. So I ran it in two parts:\n- Every `tests/` file with `--cov=app`, excluding the slow performance test: all passed, with 99% line coverage of `app/`.\n- The slow NFR-4 performance test on its own: it passed in about 14 s.\n\nThe 99% figure was measured just before I added one more test (`test_service_defensively_rejects_invalid_alias`). I ran that test on its own and it passed.\n\n**To fix the timeout (outside my write scope):** add `testpaths = [\"tests\"]` to the pytest config (`pyproject.toml` or `pytest.ini`), or add `norecursedirs = .sdlc`.\n\n**Isolation:** every test uses a fresh temporary SQLite database, either through the `make_client` fixture in `conftest.py` or a `tmp_path` file in the migration tests.\n\n**What's covered:**\n- **Aliases:** valid alias, 3- and 32-character boundaries, every listed bad format with no row persisted, case sensitivity, and 401 without an API key.\n- **Reserved words:** each reserved word and its case variants give 422. `metrics` is now reserved and a generated `metrics` code is discarded. Probe and docs routes still work.\n- **409 cases:** alias equal to an existing alias, a generated code, a deactivated link or an expired link. A simulated insert race gives 409, never calls `generate_code` and leaves no link or idempotency rows. A second test bypasses the pre-check so the database UNIQUE constraint itself produces the 409.\n- **Widened `{code}` lookup:** all five code endpoints work for `my-link_1`. Malformed codes give 404 without querying the database (a monkeypatch makes any query fail the test). Well-formed but unknown codes give 404.\n- **`expires_at`:** `Z`, offset and naive inputs all come back as UTC. Past values, and a value equal to the current time under a controlled clock, give 422. Numbers, `true`, `''`, `tomorrow` and month 13 give 422.\n- **Expiry behaviour:** GET and HEAD on an expired link give 410 `Link has expired` with no Location header and no click. The exact expiry instant counts as expired. Deactivation takes precedence over expiry. Metadata, stats and delete still work on expired links, and `is_expired` turns true while `is_active` stays true.\n- **Idempotency:** identical payloads replay. A different alias or expiry gives 409. Equal instants in different offsets replay. A legacy row hashed as sha256(url) still replays. Failed attempts store no idempotency record.\n- **BUG-77:** upper-case schemes are accepted and redirected byte-for-byte. All 8 `javascript:` variants give 422, also when combined with alias or expiry.\n- **Migration:** a legacy database (built with stdlib `sqlite3`) boots twice and keeps its data, with exactly one INFO log line on the first boot. A fresh database is a no-op. A concurrent duplicate-column error is tolerated; any other failure is re-raised and logged. The DDL is a literal string.\n- **Other checks:**\n  - The redirect issues one SELECT for active, expired and deactivated links alike, so the expiry check adds no query (NFR-1).\n  - OpenAPI lists 409/422 for POST and 410 for GET and HEAD.\n  - The docs contain the required content.\n  - Logs contain no alias or expiry values.\n\n**Gaps:**\n- One defensive branch isn't exercised: on an alias insert race where the same Idempotency-Key also won (`link_service.py` line 223), the winner's result should be replayed.\n- The PostgreSQL `TIMESTAMP` branch of the migration isn't run, because the tests only use SQLite.",
+    "test_files": [
+      "tests/test_aliases.py",
+      "tests/test_expiration.py",
+      "tests/test_idempotency_cr142.py",
+      "tests/test_bug77_url_validation.py",
+      "tests/test_migration.py"
+    ],
+    "fr_coverage": {
+      "FR-1": [
+        "test_create_with_alias_returns_201_with_code_and_location",
+        "test_alias_boundary_lengths_accepted",
+        "test_alias_format_errors_return_422_list_and_persist_nothing",
+        "test_omitted_or_null_alias_generates_base62_code",
+        "test_aliases_are_case_sensitive",
+        "test_alias_create_requires_api_key",
+        "test_alias_stored_exactly_as_given",
+        "test_service_defensively_rejects_invalid_alias",
+        "test_expiry_combined_with_alias"
+      ],
+      "FR-2": [
+        "test_reserved_alias_returns_422",
+        "test_reserved_names_with_dot_return_422",
+        "test_reserved_list_contents",
+        "test_alias_containing_reserved_word_is_accepted",
+        "test_probe_and_docs_routes_not_shadowed",
+        "test_reserved_or_taken_alias_with_key_stores_no_record"
+      ],
+      "FR-3": [
+        "test_duplicate_alias_returns_409",
+        "test_alias_equal_to_generated_code_returns_409",
+        "test_alias_equal_to_deactivated_code_returns_409",
+        "test_alias_equal_to_expired_code_returns_409",
+        "test_alias_insert_race_maps_to_409_without_generating",
+        "test_alias_insert_race_with_idempotency_key_leaves_no_rows",
+        "test_real_unique_constraint_backs_alias_uniqueness",
+        "test_generated_code_exhaustion_still_returns_503",
+        "test_generated_code_collision_retries"
+      ],
+      "FR-4": [
+        "test_alias_resolves_on_all_code_endpoints",
+        "test_malformed_codes_return_404_without_db_lookup",
+        "test_valid_format_unknown_codes_return_404",
+        "test_code_validators"
+      ],
+      "FR-5": [
+        "test_expires_at_normalised_to_utc",
+        "test_relative_future_expiry_with_real_clock",
+        "test_expires_at_not_in_future_returns_422",
+        "test_past_expiry_with_real_clock_returns_422",
+        "test_invalid_expires_at_returns_422",
+        "test_no_expiry_never_expires",
+        "test_expiry_combined_with_alias",
+        "test_aware_clock_is_supported",
+        "test_alias_combined_with_expiry_in_db"
+      ],
+      "FR-6": [
+        "test_expired_link_get_returns_410_without_location_or_click",
+        "test_expired_link_head_returns_410_no_click",
+        "test_exact_expiry_instant_counts_as_expired",
+        "test_future_expiry_redirects_and_records_click",
+        "test_expired_via_direct_db_update",
+        "test_deactivated_and_expired_returns_deactivated_detail",
+        "test_deactivated_not_expired_410_unchanged",
+        "test_management_endpoints_work_for_expired_links",
+        "test_monkeypatched_utcnow_is_used_by_default_clock"
+      ],
+      "FR-7": [
+        "test_metadata_contains_new_and_existing_fields",
+        "test_url_only_create_response_is_superset_of_old",
+        "test_openapi_documents_new_fields_and_statuses",
+        "test_management_endpoints_work_for_expired_links",
+        "test_replay_body_reflects_current_expiry_state"
+      ],
+      "FR-8": [
+        "test_legacy_database_is_migrated_and_usable",
+        "test_second_boot_is_noop_and_preserves_data",
+        "test_fresh_database_has_column_and_migration_is_noop",
+        "test_ensure_schema_without_links_table",
+        "test_ensure_schema_returns_true_on_legacy_db",
+        "test_concurrent_duplicate_column_is_tolerated",
+        "test_concurrent_race_tolerated_at_app_startup",
+        "test_other_migration_failure_is_raised_and_logged",
+        "test_migration_ddl_is_literal_and_portable"
+      ],
+      "FR-9": [
+        "test_identical_payload_replays",
+        "test_different_alias_or_expiry_conflicts",
+        "test_alias_added_where_original_had_none_conflicts",
+        "test_equal_instants_in_different_offsets_replay",
+        "test_legacy_url_only_hash_still_replays",
+        "test_compute_request_hash_rules",
+        "test_reserved_or_taken_alias_with_key_stores_no_record",
+        "test_non_future_expiry_with_key_stores_no_record",
+        "test_replay_body_reflects_current_expiry_state"
+      ],
+      "FR-10": [
+        "test_reserved_list_contents",
+        "test_generated_reserved_metrics_candidate_is_discarded",
+        "test_reserved_alias_returns_422"
+      ],
+      "FR-11": [
+        "test_uppercase_http_scheme_accepted_unchanged",
+        "test_uppercase_https_with_path_accepted_unchanged",
+        "test_javascript_variants_rejected",
+        "test_validator_rejects_javascript_directly",
+        "test_validator_returns_uppercase_scheme_unchanged"
+      ],
+      "FR-12": [
+        "test_omitted_or_null_alias_generates_base62_code",
+        "test_probe_and_docs_routes_not_shadowed",
+        "test_url_only_create_response_is_superset_of_old",
+        "test_future_expiry_redirects_and_records_click",
+        "test_deactivated_not_expired_410_unchanged",
+        "test_legacy_url_only_hash_still_replays",
+        "test_alias_resolves_on_all_code_endpoints"
+      ],
+      "FR-13": [
+        "test_openapi_documents_new_fields_and_statuses"
+      ],
+      "FR-14": [
+        "test_api_docs_describe_cr142",
+        "test_operations_docs_describe_migration",
+        "test_readme_and_changelog_updated"
+      ],
+      "NFR-1": [
+        "test_expiry_check_adds_no_queries"
+      ],
+      "NFR-2": [
+        "test_alias_format_errors_return_422_list_and_persist_nothing",
+        "test_reserved_alias_returns_422",
+        "test_duplicate_alias_returns_409",
+        "test_expired_link_get_returns_410_without_location_or_click",
+        "test_javascript_variants_rejected",
+        "test_alias_create_requires_api_key"
+      ],
+      "NFR-3": [
+        "test_legacy_database_is_migrated_and_usable",
+        "test_second_boot_is_noop_and_preserves_data",
+        "test_concurrent_duplicate_column_is_tolerated"
+      ],
+      "NFR-4": [
+        "test_alias_insert_race_maps_to_409_without_generating",
+        "test_alias_insert_race_with_idempotency_key_leaves_no_rows",
+        "test_real_unique_constraint_backs_alias_uniqueness"
+      ],
+      "NFR-5": [
+        "test_reserved_list_contents",
+        "test_monkeypatched_utcnow_is_used_by_default_clock"
+      ],
+      "NFR-6": [
+        "test_migration_ddl_is_literal_and_portable"
+      ],
+      "NFR-7": [
+        "test_legacy_database_is_migrated_and_usable",
+        "test_second_boot_is_noop_and_preserves_data",
+        "test_other_migration_failure_is_raised_and_logged"
+      ],
+      "NFR-8": [
+        "test_migration_log_has_no_alias_or_expiry_values"
+      ]
+    },
+    "defects_found": [],
+    "pytest": {
+      "code": 0,
+      "passed": 338,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "coverage": 99.06,
+      "output": "........................................................................ [ 21%]\n........................................................................ [ 42%]\n........................................................................ [ 63%]\n........................................................................ [ 85%]\n..................................................                       [100%]\n================================ tests coverage ================================\n_______________ coverage: platform darwin, python 3.11.9-final-0 _______________\n\nCoverage JSON written to file coverage.json\n338 passed in 89.11s (0:01:29)"
+    }
+  }
+}

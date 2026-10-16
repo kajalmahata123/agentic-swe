@@ -1,0 +1,27 @@
+{
+  "name": "impl_report:WP-2",
+  "version": 1,
+  "hash": "00a0f3d1d060a33f",
+  "producer": "impl:WP-2",
+  "derived_from": {
+    "requirements_spec": "a29fdf7abe9a8b61",
+    "design": "c09f3c47030c55ea"
+  },
+  "value": {
+    "summary": "WP-2 is in: the Link model has a new `expires_at` column and an `is_expired_at(now)` method, and every startup now runs `ensure_schema(engine)` to add the column to existing databases. Compile, ruff and all 165 existing tests pass. Nothing has yet run the migration against an older database that lacks the column; the WP-tests migration tests (tests/test_migration.py) will cover that.\n\n- **Model:** `expires_at` is a plain nullable SQLAlchemy `DateTime` (naive UTC, NULL means it never expires). `is_expired_at(now)` returns true when `expires_at` is set and is at or before `now`, so the exact instant counts as expired.\n- **Migration:** `ensure_schema` in `app/core/db.py` does nothing if there is no `links` table or the column already exists. Otherwise it runs `ALTER TABLE links ADD COLUMN expires_at DATETIME NULL`, or `... TIMESTAMP NULL` on PostgreSQL. Both are fixed strings passed straight to `text()`. If the ALTER fails but the column now exists (another instance added it first), startup carries on. Any other failure is logged and re-raised so startup fails. A successful change writes exactly one INFO line on the `app.migrations` logger; no-ops log at DEBUG. The docstring includes the manual SQL for each database. `_links_columns(engine)` is a separate function so tests can replace it.\n- **Startup:** `app/main.py` calls `ensure_schema(engine)` straight after `create_all`. It also sets `app.state.clock = None`, a test hook for a fake clock. Router order and the module-level `app = create_app()` are unchanged.",
+    "files_changed": [
+      "app/models/link.py",
+      "app/core/db.py",
+      "app/main.py"
+    ],
+    "notes": [
+      "Ran `python -m compileall -q app` (ok), `python -m ruff check app` (no issues) and `python -m pytest -q` (all 165 existing tests pass).",
+      "The startup check opens a fresh inspector on each call, so it sees the column when another instance adds it at the same time.",
+      "`app/models/link.py` imports only from `app.models` and generic sqlalchemy types, so the architecture and portable-types tests still pass."
+    ],
+    "open_issues": [
+      "Nothing reads `app.state.clock` until WP-5 updates `app/api/deps.get_link_service` to pass `getattr(request.app.state, 'clock', None)` to `LinkService`, and WP-4 adds the `clock` parameter to `LinkService`.",
+      "The migration has not been tested against a database with the old `links` table, nor have the race and failure paths. The planned tests/test_migration.py from the tests agent covers this."
+    ]
+  }
+}

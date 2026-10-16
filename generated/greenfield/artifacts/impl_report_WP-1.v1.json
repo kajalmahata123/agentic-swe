@@ -1,0 +1,36 @@
+{
+  "name": "impl_report:WP-1",
+  "version": 1,
+  "hash": "9ed15620b51e73a4",
+  "producer": "impl:WP-1",
+  "derived_from": {
+    "requirements_spec": "f9e39c09ed667d11",
+    "design": "69d249761c25951f"
+  },
+  "value": {
+    "summary": "WP-1 is in place: requirements.txt with the 8 pinned lines, empty app/__init__.py and app/core/__init__.py, and the five app/core modules (config.py, db.py, errors.py, logging.py, middleware.py) with the names and signatures the design gives. `python -m compileall -q app` and `ruff check app` both pass. Nothing has been run beyond that: tests/ is empty, and app/main.py (WP-5) doesn't exist yet, so none of this code has been imported or exercised.",
+    "files_changed": [
+      "requirements.txt",
+      "app/__init__.py",
+      "app/core/__init__.py",
+      "app/core/config.py",
+      "app/core/db.py",
+      "app/core/errors.py",
+      "app/core/logging.py",
+      "app/core/middleware.py"
+    ],
+    "notes": [
+      "Departure from the spec: Settings.log_level is upper-cased and also checked against DEBUG/INFO/WARNING/ERROR/CRITICAL. The spec only asked for upper-casing. A bad LOG_LEVEL now fails when Settings is built, instead of later inside configure_logging/setLevel.",
+      "Settings has no module-level instance and no lru_cache. ip_hash_salt becomes None when it is empty or only whitespace (a validator that runs before type checking).",
+      "get_db(request) gets its session from request.app.state.session_factory and closes it in `finally`. It is the one function to override in tests via app.dependency_overrides[app.core.db.get_db].",
+      "errors.py: AppError keeps self.detail, which falls back to the class's default_detail. Handlers are registered for AppError, starlette HTTPException (keeps headers such as Allow on 405), RequestValidationError (422 with jsonable_encoder(exc.errors())), SQLAlchemyError (logged to 'app.errors', returns 503 'Service temporarily unavailable') and Exception (logged, returns 500 'Internal Server Error'). No response body contains the exception message.",
+      "logging.py: JsonFormatter writes one JSON line with ts (ISO UTC), level, logger and message. It adds method/path/status/duration_ms when present and 'exc' when exc_info is set. configure_logging is safe to call repeatedly: it adds at most one JsonFormatter StreamHandler and leaves propagate=True.",
+      "middleware.py: RequestLoggingMiddleware catches any exception from call_next, logs it with its traceback to 'app.errors' and returns 500 {'detail': 'Internal Server Error'}. It then logs 'request' to 'app.request' with method, path (no query string), status and duration_ms. It never logs the client IP or headers.",
+      "Because the middleware catches everything, the generic Exception handler in errors.py will rarely run in practice. FR-11's 500 behaviour depends on WP-5 adding the middleware in create_app."
+    ],
+    "open_issues": [
+      "WP-5 must call configure_logging(settings.log_level), register_exception_handlers(app) and app.add_middleware(RequestLoggingMiddleware) in create_app, and store settings, engine and session_factory on app.state so get_db works.",
+      "Docs/ops: run uvicorn with --no-access-log so client IPs are not logged (RK-4)."
+    ]
+  }
+}

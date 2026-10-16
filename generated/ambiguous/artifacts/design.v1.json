@@ -1,0 +1,609 @@
+{
+  "name": "design",
+  "version": 1,
+  "hash": "4119fc1a15d90fd8",
+  "producer": "design",
+  "derived_from": {
+    "requirements_spec": "2bad39293c85110d",
+    "codebase_impact": "fcd1ac8fa2687297",
+    "codebase_index": "274d0ad173e248d2"
+  },
+  "value": {
+    "overview": "Change design for campaign readiness of the existing FastAPI/SQLAlchemy URL shortener. It is a single instance on SQLite at about 50 RPS with redirect p95 < 100 ms, best effort. The changes are small and behaviour-preserving, at the engine, query and routing level. There is no cache, no async click ingestion, no new dependency and no schema change to existing tables (the only exception is a MySQL-only collation variant).\n\n1. Hardened SQLite engine (FR-15/FR-16). This lives in app/core/db.py. File-based SQLite gets WAL and synchronous=NORMAL through a connect event, plus a busy_timeout taken from the new setting SQLITE_BUSY_TIMEOUT_MS (passed as pysqlite's `timeout` connect arg). A configurable QueuePool comes from DB_POOL_SIZE, DB_MAX_OVERFLOW and DB_POOL_TIMEOUT_SECONDS. In-memory SQLite ignores the pool settings and WAL. Non-SQLite URLs keep pool_pre_ping and get the pool settings. At startup, app.db logs one structured 'database tuning' line with no URL and no secrets (NFR-16).\n2. Lean, contention-tolerant redirect path (FR-15/FR-17/NFR-12). LinkRepository.get_redirect_target runs SELECT id, url, is_active WHERE code=?. LinkService resolves through it. A click INSERT or COMMIT failure, such as a lock timeout, is rolled back and logged once at WARNING with no IP and no exception text. The visitor still gets the 307. A failed lookup still becomes a 503 JSON response through the existing SQLAlchemyError handler.\n3. HEAD probes (FR-14). Separate HEAD /healthz and HEAD /readyz routes (include_in_schema=False) on the health router, which is registered before the catch-all. The OpenAPI document stays byte-identical.\n4. Bounded-memory stats (FR-18). SQL GROUP BY on a dialect-compiled UTC-date construct (SQLite date(), MySQL DATE(), default CAST AS DATE). The per-click timestamp list is removed. Referrers keep the SQL GROUP BY plus the Python sort and top-10 cap. Memory is O(days + referrer groups).\n5. MySQL binary collation on links.code through String.with_variant (FR-19). DDL for SQLite and PostgreSQL is unchanged.\n6. Corrected docs (FR-20): auth, settings, HEAD probes, WAL and backups, locking runbook, a 'Campaign deployment' section, a 'Scaling beyond the campaign profile' section and the CHANGELOG.\n\nThe api_contract schema only accepts GET/POST/PUT/PATCH/DELETE, so the HEAD contracts are written into the matching GET entries:\n- HEAD /{code}: 307, 404, 410 or 503 with no click; one SELECT and no INSERT; not in OpenAPI.\n- HEAD /healthz: 200 with an empty body; no DB access; not in OpenAPI.\n- HEAD /readyz: 200 with an empty body, or 503 from the readiness check; not in OpenAPI.\n\nUnchanged files: app/api/redirect.py, app/api/links.py, app/api/deps.py, app/core/errors.py, app/core/middleware.py, the schemas, the other models and requirements.txt. Public HTTP contracts are unchanged except for the new HEAD probe support.",
+    "components": [
+      {
+        "name": "Core: configuration",
+        "responsibility": "Validated Settings, extended with the new fields sqlite_busy_timeout_ms, db_pool_size, db_max_overflow and db_pool_timeout_seconds. No module-level instance.",
+        "files": [
+          "app/core/config.py"
+        ]
+      },
+      {
+        "name": "Core: database engine and session",
+        "responsibility": "Per-app engine creation. For file-based SQLite: WAL, synchronous=NORMAL, busy_timeout and a configurable QueuePool. For in-memory SQLite: tolerated, no pool args. For other backends: pool_pre_ping plus pool args. Also the session factory, the get_db dependency, and describe_db_tuning/format_db_tuning for the startup log.",
+        "files": [
+          "app/core/db.py"
+        ]
+      },
+      {
+        "name": "Core: logging",
+        "responsibility": "JSON-lines formatter. It now also emits the structured `db_tuning` extra field.",
+        "files": [
+          "app/core/logging.py"
+        ]
+      },
+      {
+        "name": "API: probes",
+        "responsibility": "GET and HEAD for /healthz (no DB) and /readyz (SELECT 1). The HEAD routes are hidden from OpenAPI and registered before the catch-all.",
+        "files": [
+          "app/api/health.py"
+        ]
+      },
+      {
+        "name": "API: redirect (unchanged)",
+        "responsibility": "Catch-all GET and HEAD /{code}, registered last. Builds a raw 307 with the exact Location header and Cache-Control: no-store.",
+        "files": [
+          "app/api/redirect.py"
+        ]
+      },
+      {
+        "name": "Service: links",
+        "responsibility": "Business rules and transaction ownership. Redirect resolution goes through the narrow lookup. Click recording is best-effort with a rollback and a single WARNING log without the IP.",
+        "files": [
+          "app/services/link_service.py"
+        ]
+      },
+      {
+        "name": "Service: stats",
+        "responsibility": "Builds LinkStats from SQL-aggregated daily counts and grouped referrer counts. Semantics unchanged.",
+        "files": [
+          "app/services/stats_service.py"
+        ]
+      },
+      {
+        "name": "Repository: links",
+        "responsibility": "get_by_code (full row), the new get_redirect_target (narrow columns, returns a RedirectTarget NamedTuple), and add.",
+        "files": [
+          "app/repositories/link_repository.py"
+        ]
+      },
+      {
+        "name": "Repository: clicks",
+        "responsibility": "Click insert, all-time count, SQL daily aggregation through the UtcDate construct compiled per dialect, and referrer group counts with ''/NULL merged.",
+        "files": [
+          "app/repositories/click_repository.py"
+        ]
+      },
+      {
+        "name": "Model: Link",
+        "responsibility": "links table. code is String(32) with a MySQL/MariaDB variant String(32, collation='utf8mb4_bin').",
+        "files": [
+          "app/models/link.py"
+        ]
+      },
+      {
+        "name": "App factory",
+        "responsibility": "create_app passes the tuning settings to create_db_engine and logs the startup tuning line in the lifespan after create_all. Router order is unchanged (health, links, redirect last).",
+        "files": [
+          "app/main.py"
+        ]
+      },
+      {
+        "name": "Documentation",
+        "responsibility": "README, API reference, operations runbook (campaign profile, WAL/backups, locking, PostgreSQL path) and changelog, kept in line with the code.",
+        "files": [
+          "README.md",
+          "docs/API.md",
+          "docs/OPERATIONS.md",
+          "CHANGELOG.md"
+        ]
+      }
+    ],
+    "api_contract": [
+      {
+        "method": "POST",
+        "path": "/api/links",
+        "summary": "Create a short link (unchanged). Requires X-API-Key. Optional Idempotency-Key header.",
+        "request": "Headers: X-API-Key (required), Idempotency-Key (optional, 1-255 chars, not blank). Body LinkCreate {\"url\": string}.",
+        "responses": {
+          "201": "LinkCreatedResponse; Location: /api/links/{code}; Idempotent-Replayed: true on replay",
+          "400": "{\"detail\": \"Invalid Idempotency-Key header\"}",
+          "401": "{\"detail\": \"Invalid or missing API key\"}; WWW-Authenticate: ApiKey (also when API_KEY is unset: fail closed)",
+          "409": "{\"detail\": ...} key reused with a different payload, or a race conflict",
+          "422": "{\"detail\": [pydantic errors]} invalid body or URL",
+          "503": "{\"detail\": ...} code allocation exhausted or database error"
+        },
+        "fr_ids": [
+          "FR-21"
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/api/links/{code}",
+        "summary": "Link metadata with all-time total_clicks (unchanged). Requires X-API-Key.",
+        "request": "Header X-API-Key; path code",
+        "responses": {
+          "200": "LinkDetailResponse",
+          "401": "{\"detail\": \"Invalid or missing API key\"}",
+          "404": "{\"detail\": \"Link not found\"} for unknown or malformed codes",
+          "503": "{\"detail\": \"Service temporarily unavailable\"}"
+        },
+        "fr_ids": [
+          "FR-21"
+        ]
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/links/{code}",
+        "summary": "Soft-deactivate a link, idempotent (unchanged). Requires X-API-Key. The next GET or HEAD /{code} returns 410 immediately.",
+        "request": "Header X-API-Key; path code",
+        "responses": {
+          "204": "Deactivated (empty body)",
+          "401": "{\"detail\": \"Invalid or missing API key\"}",
+          "404": "{\"detail\": \"Link not found\"}",
+          "503": "{\"detail\": \"Service temporarily unavailable\"}"
+        },
+        "fr_ids": [
+          "FR-21"
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/api/links/{code}/stats",
+        "summary": "Click stats with SQL-side daily aggregation (bounded memory). Response schema and semantics unchanged. Requires X-API-Key.",
+        "request": "Header X-API-Key; path code; query days: int 1..365, default 30",
+        "responses": {
+          "200": "LinkStatsResponse {code, total_clicks (all-time), clicks_per_day [{date, count}] ascending with empty days omitted, top_referrers [{referrer|null, count}] at most 10}",
+          "401": "{\"detail\": \"Invalid or missing API key\"}",
+          "404": "{\"detail\": \"Link not found\"}",
+          "422": "{\"detail\": [...]} days invalid or outside 1..365",
+          "503": "{\"detail\": \"Service temporarily unavailable\"}"
+        },
+        "fr_ids": [
+          "FR-18",
+          "FR-21"
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/{code}",
+        "summary": "Public redirect, registered last. GET does a narrow lookup (one SELECT of id, url, is_active), then one INSERT into click_events and one COMMIT. If the click write fails or times out, it is rolled back, one WARNING is logged and the visitor still gets the 307. HEAD /{code} (unchanged handler, include_in_schema=False) gives the same statuses and headers with no click, one SELECT and no INSERT.",
+        "request": "Path code (^[A-Za-z0-9]{1,32}$, otherwise 404 with no SQL); optional Referer (truncated to 2048) and User-Agent (truncated to 512) headers",
+        "responses": {
+          "307": "Empty body; Location = stored URL byte-for-byte; Cache-Control: no-store; GET records exactly one click (best-effort); HEAD records none",
+          "404": "{\"detail\": \"Link not found\"} for unknown or malformed codes; no click",
+          "410": "{\"detail\": \"Link has been deactivated\"}; no Location; no click",
+          "503": "{\"detail\": \"Service temporarily unavailable\"} only when the link lookup itself fails (database unavailable)"
+        },
+        "fr_ids": [
+          "FR-15",
+          "FR-17",
+          "FR-14",
+          "FR-21"
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/healthz",
+        "summary": "Liveness probe; never touches the DB (unchanged). New: HEAD /healthz (a separate route, include_in_schema=False) returns 200 with an empty body, does no DB access and runs no link lookup. POST /healthz still returns 405.",
+        "request": "none",
+        "responses": {
+          "200": "GET: HealthResponse {\"status\": \"ok\"}; HEAD: empty body",
+          "405": "POST or other methods: {\"detail\": \"Method Not Allowed\"}"
+        },
+        "fr_ids": [
+          "FR-14",
+          "FR-21"
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/readyz",
+        "summary": "Readiness probe running SELECT 1 (unchanged). New: HEAD /readyz (a separate route, include_in_schema=False) runs the same SELECT 1 check, never a links lookup, and returns 200 with an empty body or 503 from the readiness check. POST /readyz still returns 405.",
+        "request": "none",
+        "responses": {
+          "200": "GET: HealthResponse {\"status\": \"ready\"}; HEAD: empty body",
+          "405": "POST or other methods: {\"detail\": \"Method Not Allowed\"}",
+          "503": "{\"detail\": \"Database is not ready\"} (or \"Service temporarily unavailable\" if opening the session fails); no exception text, SQL or traceback; for both GET and HEAD"
+        },
+        "fr_ids": [
+          "FR-14",
+          "FR-21"
+        ]
+      }
+    ],
+    "data_model": [
+      {
+        "name": "Link (table links), unchanged except for the MySQL-only collation",
+        "fields": [
+          {
+            "name": "id",
+            "type": "Integer",
+            "constraints": "primary key, autoincrement"
+          },
+          {
+            "name": "code",
+            "type": "String(32).with_variant(String(32, collation='utf8mb4_bin'), 'mysql', 'mariadb')",
+            "constraints": "NOT NULL; UNIQUE uq_links_code. Case-sensitive on all backends. MySQL DDL becomes VARCHAR(32) COLLATE utf8mb4_bin; SQLite and PostgreSQL DDL unchanged (VARCHAR(32))"
+          },
+          {
+            "name": "url",
+            "type": "String(2048)",
+            "constraints": "NOT NULL"
+          },
+          {
+            "name": "is_active",
+            "type": "Boolean",
+            "constraints": "NOT NULL, default true"
+          },
+          {
+            "name": "created_at",
+            "type": "DateTime (naive UTC)",
+            "constraints": "NOT NULL, default utcnow"
+          },
+          {
+            "name": "deactivated_at",
+            "type": "DateTime (naive UTC)",
+            "constraints": "nullable"
+          }
+        ],
+        "indexes": [
+          "UNIQUE uq_links_code (code)"
+        ]
+      },
+      {
+        "name": "ClickEvent (table click_events), unchanged",
+        "fields": [
+          {
+            "name": "id",
+            "type": "Integer",
+            "constraints": "primary key, autoincrement"
+          },
+          {
+            "name": "link_id",
+            "type": "Integer",
+            "constraints": "NOT NULL, FK links.id"
+          },
+          {
+            "name": "created_at",
+            "type": "DateTime (naive UTC)",
+            "constraints": "NOT NULL, default utcnow"
+          },
+          {
+            "name": "referrer",
+            "type": "String(2048)",
+            "constraints": "nullable; truncated to 2048"
+          },
+          {
+            "name": "user_agent",
+            "type": "String(512)",
+            "constraints": "nullable; truncated to 512"
+          },
+          {
+            "name": "ip_hash",
+            "type": "String(64)",
+            "constraints": "nullable; HMAC-SHA256 hex only when IP_HASH_SALT is set; no raw IP column"
+          }
+        ],
+        "indexes": [
+          "ix_click_events_link_id_created_at (link_id, created_at). Serves COUNT by link_id and the windowed GROUP BY day. No new index."
+        ]
+      },
+      {
+        "name": "IdempotencyKey (table idempotency_keys), unchanged",
+        "fields": [
+          {
+            "name": "id",
+            "type": "Integer",
+            "constraints": "primary key"
+          },
+          {
+            "name": "key",
+            "type": "String(255)",
+            "constraints": "NOT NULL, UNIQUE uq_idempotency_keys_key"
+          },
+          {
+            "name": "request_hash",
+            "type": "String(64)",
+            "constraints": "NOT NULL, SHA-256 of url"
+          },
+          {
+            "name": "link_id",
+            "type": "Integer",
+            "constraints": "NOT NULL, FK links.id"
+          },
+          {
+            "name": "created_at",
+            "type": "DateTime (naive UTC)",
+            "constraints": "NOT NULL"
+          }
+        ],
+        "indexes": [
+          "UNIQUE uq_idempotency_keys_key (key)"
+        ]
+      }
+    ],
+    "decisions": [
+      {
+        "id": "ADR-1",
+        "title": "Harden SQLite at the engine level: WAL and synchronous=NORMAL through a connect event, busy_timeout through the pysqlite timeout connect arg",
+        "decision": "For file-based SQLite URLs, create_db_engine registers a 'connect' event listener that calls apply_sqlite_pragmas(dbapi_connection). That function runs the literal statements 'PRAGMA journal_mode=WAL' and 'PRAGMA synchronous=NORMAL' on a DBAPI cursor and tolerates failure: it logs a WARNING and continues in the existing journal mode. busy_timeout is set by passing connect_args={'check_same_thread': False, 'timeout': (SQLITE_BUSY_TIMEOUT_MS + 0.5) / 1000}. CPython computes sqlite3_busy_timeout as (int)(timeout*1000), so the +0.5 makes PRAGMA busy_timeout report exactly SQLITE_BUSY_TIMEOUT_MS with no float truncation. The default of 5000 equals today's pysqlite default.",
+        "rationale": "With WAL, readers never block behind the click and create writers, so the redirect lookup is not stalled. synchronous=NORMAL removes the fsync per commit in WAL mode, which is safe against corruption; at most the last transactions can be lost on power failure, which is acceptable for best effort. Setting busy_timeout through the connect arg avoids building a PRAGMA with string formatting, which is banned by policy. The connect event applies to every pooled connection, and WAL persists in the file, so the deployed database upgrades automatically with no manual step.",
+        "alternatives": [
+          "Formatted 'PRAGMA busy_timeout=%d' (rejected: SQL string formatting is banned by policy)",
+          "Move production to PostgreSQL now (rejected by Q-2: no new driver; documented only)",
+          "Keep rollback-journal mode and only shorten busy_timeout (rejected: lookups would still block behind writers)"
+        ]
+      },
+      {
+        "id": "ADR-2",
+        "title": "Configurable pool only where a QueuePool exists",
+        "decision": "Pass pool_size, max_overflow and pool_timeout to create_engine for file-based SQLite (SQLAlchemy 2.0 uses QueuePool there) and for non-SQLite URLs. Do not pass them for in-memory SQLite ('sqlite://', ':memory:', 'mode=memory', 'file::memory:'), which uses SingletonThreadPool and would reject max_overflow and pool_timeout.",
+        "rationale": "This meets FR-16 and the defaults (5/10/30) reproduce current behaviour. In-memory URLs used in tests keep working.",
+        "alternatives": [
+          "Force QueuePool for all URLs (breaks in-memory semantics)",
+          "NullPool for SQLite (connect cost per request; pragmas re-run on every request)"
+        ]
+      },
+      {
+        "id": "ADR-3",
+        "title": "HEAD probes as dedicated hidden routes on the health router",
+        "decision": "Add @router.head('/healthz', include_in_schema=False) and @router.head('/readyz', include_in_schema=False), each returning an empty Response(200). The GET routes are unchanged. Readiness logic is shared through a private _check_ready(db) helper.",
+        "rationale": "The health router is included before the redirect router, so HEAD /healthz and HEAD /readyz become FULL matches before HEAD /{code}. The OpenAPI document stays identical: there is no new 'head' operation and no duplicate-operationId warning, which api_route(methods=['GET','HEAD']) would cause. POST still produces a 405 because the path matches only partially.",
+        "alternatives": [
+          "api_route(methods=['GET','HEAD']) (adds head operations to OpenAPI and emits duplicate operation-id warnings)",
+          "Excluding reserved codes inside redirect_head (couples the redirect to probe knowledge; the 404 semantics would still be wrong)"
+        ]
+      },
+      {
+        "id": "ADR-4",
+        "title": "Stats daily buckets aggregated in SQL through a dialect-compiled UtcDate construct",
+        "decision": "click_repository defines class UtcDate(FunctionElement) with type=Date() and inherit_cache=True, compiled with sqlalchemy.ext.compiler.compiles. The default (PostgreSQL and others) compiles to CAST(x AS DATE); sqlite and mysql/mariadb compile to date(x) / DATE(x). The compiler functions delegate to compiler.process(cast(...)) and compiler.process(func.date(...)), so no SQL string formatting is needed. The query is GROUP BY day ORDER BY day for one link_id with created_at >= since. Referrer counts keep GROUP BY on the raw column; '' and NULL are merged in Python, and the service still sorts and caps at 10.",
+        "rationale": "Stored timestamps are naive UTC, so a date cast with no timezone conversion gives exact UTC-day bucketing on all three dialects. Memory is O(days + referrer groups) (NFR-13). The construct compiles for all dialects without a driver, which makes the FR-18 compile test straightforward. Keeping the Python sort for referrers preserves the exact ordering semantics, including NULL last, independent of database collation. Grouping on the raw column avoids the PostgreSQL GROUP BY bound-parameter mismatch that nullif(referrer, :p) would cause.",
+        "alternatives": [
+          "Stream timestamps with yield_per and bucket in Python (O(1) memory but O(clicks) time)",
+          "func.date everywhere (PostgreSQL date() semantics are less explicit; CAST is clearer)",
+          "SQL ORDER BY plus LIMIT 10 for referrers (collation-dependent tie order; NULL ordering differs by dialect)"
+        ]
+      },
+      {
+        "id": "ADR-5",
+        "title": "Narrow redirect lookup returning a NamedTuple, with no cache",
+        "decision": "LinkRepository.get_redirect_target(code) runs select(Link.id, Link.url, Link.is_active).where(Link.code == code) and returns RedirectTarget(id, url, is_active) or None. Redirect resolution uses it. Deactivation, detail and stats keep get_by_code. There is no redirect cache and no async click ingestion.",
+        "rationale": "This gives the minimum hot-path SQL (FR-17) with no ORM identity-map or refresh overhead. Without a cache, the 410 after deactivation stays immediate (FR-7, Q-4), and synchronous clicks keep counts visible at once (Q-5). The 50 RPS target is met without either.",
+        "alternatives": [
+          "Per-app TTL cache (stale 307 after takedown; NFR-9 static rule)",
+          "Background or batched click writes (changes the visibility contract; possible click loss)"
+        ]
+      },
+      {
+        "id": "ADR-6",
+        "title": "Click-failure logging at WARNING without exc_info",
+        "decision": "In resolve_and_record_click, any exception from the click add or commit is followed by session.rollback() (its own failure is suppressed) and exactly one logger.warning('failed to record click for link_id=%s error=%s', link_id, type(exc).__name__) on 'app.services.links'. There is no traceback and no exception message. The 307 is still returned.",
+        "rationale": "FR-15 requires exactly one warning line without the IP, and NFR-14 forbids leaking request data. DBAPI exception text can contain bound parameters (referrer, user agent, hash), so logging only the class name is safe and still countable for the lost-clicks metric.",
+        "alternatives": [
+          "Keep logger.exception at ERROR (traceback text includes SQL parameters; noisier under contention)"
+        ]
+      },
+      {
+        "id": "ADR-7",
+        "title": "MySQL case-sensitive codes through a portable type variant",
+        "decision": "Link.code = mapped_column(String(32).with_variant(String(32, collation='utf8mb4_bin'), 'mysql', 'mariadb'), nullable=False). The docs give the manual ALTER TABLE for existing MySQL databases.",
+        "rationale": "type(col.type) stays sqltypes.String and the module does not import sqlalchemy.dialects, so the existing portability test passes. DDL for SQLite and PostgreSQL is unchanged (NFR-18).",
+        "alternatives": [
+          "sqlalchemy.dialects.mysql.VARCHAR(collation=...) (violates test_orm_uses_declarative_base_and_portable_types)",
+          "An automatic migration (no migration tooling; out of scope)"
+        ]
+      },
+      {
+        "id": "ADR-8",
+        "title": "Startup tuning log line built from the engine and settings, without the URL",
+        "decision": "core/db.py provides describe_db_tuning(engine, settings) -> dict and format_db_tuning(dict) -> str. In the lifespan after create_all, main.py logs on 'app.db' at INFO: message 'database tuning ' + format_db_tuning(tuning), with extra={'db_tuning': tuning}. 'db_tuning' is added to the JsonFormatter extra fields.",
+        "rationale": "Operators can confirm the campaign configuration from the logs (NFR-16/NFR-20). The URL is never included, so credentials cannot leak (NFR-15). PRAGMA values are read back from a real pooled connection, so they reflect the effective settings.",
+        "alternatives": [
+          "Log the settings object (risk of leaking DATABASE_URL credentials and API_KEY)"
+        ]
+      }
+    ],
+    "risks": [
+      {
+        "id": "DR-1",
+        "description": "WAL cannot be enabled (network filesystem, read-only directory) or behaves differently for in-memory URLs.",
+        "likelihood": "low",
+        "impact": "medium",
+        "mitigation": "apply_sqlite_pragmas tolerates failure and logs a WARNING ('could not enable SQLite WAL journal mode'). In-memory URLs skip WAL entirely. The startup tuning log shows the effective journal_mode. OPERATIONS.md requires local writable disk. Unit test with a fake DBAPI connection whose cursor raises."
+      },
+      {
+        "id": "DR-2",
+        "description": "Float truncation in pysqlite's timeout-to-milliseconds conversion makes PRAGMA busy_timeout differ by 1 ms from the setting.",
+        "likelihood": "medium",
+        "impact": "low",
+        "mitigation": "sqlite_timeout_seconds(ms) returns (ms + 0.5) / 1000. A test asserts PRAGMA busy_timeout == the setting for 0, 200, 1000, 5000 and 60000."
+      },
+      {
+        "id": "DR-3",
+        "description": "SQL day bucketing differs from the Python implementation (string dates on SQLite, edge-of-window comparison).",
+        "likelihood": "low",
+        "impact": "medium",
+        "mitigation": "UtcDate has type=Date() so SQLite strings are parsed to date, and the repository also converts str with date.fromisoformat. The window filter is unchanged (created_at >= since). The existing tests/test_stats.py runs unmodified as the oracle. The three-dialect compile test covers the dialect guards."
+      },
+      {
+        "id": "DR-4",
+        "description": "Under burst load, a click INSERT waits for the full busy_timeout (default 5 s), which raises redirect latency.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "With WAL and synchronous=NORMAL, write transactions are sub-millisecond, so waits stay short. OPERATIONS.md recommends SQLITE_BUSY_TIMEOUT_MS=1000 for the campaign. Each dropped click is logged once. NFR-19 tests the burst."
+      },
+      {
+        "id": "DR-5",
+        "description": "Pool exhaustion: 16 or more concurrent requests exceed 5+10 connections and queue for up to 30 s.",
+        "likelihood": "low",
+        "impact": "medium",
+        "mitigation": "Pool sizing is configurable. Campaign guidance is DB_POOL_SIZE=10, DB_MAX_OVERFLOW=10, DB_POOL_TIMEOUT_SECONDS=10, which stays at or below the 40 threadpool tokens. Requests release connections quickly."
+      },
+      {
+        "id": "DR-6",
+        "description": "Swallowing all click-write exceptions could hide programming errors.",
+        "likelihood": "low",
+        "impact": "low",
+        "mitigation": "This is existing behaviour (best effort, by design). The WARNING line includes the exception class name, and OPERATIONS.md tells operators to alert on sustained 'failed to record click'."
+      },
+      {
+        "id": "DR-7",
+        "description": "Implementers change public signatures used by tests: ClickRepository.add is monkeypatched in an existing test, and LinkService.get_link_detail is monkeypatched as well.",
+        "likelihood": "medium",
+        "impact": "high",
+        "mitigation": "The work packages require keeping ClickRepository.add, count_for_link and referrer_counts, LinkRepository.get_by_code, and all LinkService and StatsService public method signatures. The GET click insert must go through ClickRepository.add."
+      },
+      {
+        "id": "DR-8",
+        "description": "Docs drift from the code: setting names, log messages and recommended values.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "The docs package depends on the code packages and uses the exact names and messages fixed in this design. A test checks that every Settings env name appears in README.md, and a doc test checks the section headings."
+      }
+    ],
+    "work_packages": [
+      {
+        "id": "WP-1",
+        "title": "Core: new settings, hardened engine factory, tuning description, log field",
+        "description": "Do not import from app.api, app.services or app.repositories. No module-level engine, settings or cache objects; a module-level logger is fine. No lru_cache or 'cache' names. Only literal strings in text() and exec_driver_sql. No string-formatted SQL.\n\n(1) app/core/config.py: add these fields to Settings after api_key, and update the module docstring's env list:\n- sqlite_busy_timeout_ms: int = Field(5000, ge=0, le=60000)\n- db_pool_size: int = Field(5, ge=1)\n- db_max_overflow: int = Field(10, ge=0)\n- db_pool_timeout_seconds: float = Field(30.0, gt=0, le=300)\nAdd a short comment on each. All existing fields, defaults and validators stay unchanged. Invalid values must raise pydantic ValidationError, which is a ValueError.\n\n(2) app/core/db.py: keep create_session_factory and get_db exactly as they are. Keep `from sqlalchemy import Engine, create_engine, event` and call create_engine by that module-level name, so tests can monkeypatch app.core.db.create_engine. Add logger = logging.getLogger('app.db'). Add these public functions:\n\na) is_sqlite_url(database_url: str) -> bool: make_url(database_url).get_backend_name() == 'sqlite'.\n\nb) is_sqlite_memory_url(database_url: str) -> bool: True when the URL is SQLite and any of these hold: url.database is None or ''; url.database == ':memory:'; url.database starts with 'file::memory:'; url.query.get('mode') == 'memory'.\n\nc) sqlite_timeout_seconds(busy_timeout_ms: int) -> float: return (busy_timeout_ms + 0.5) / 1000. The docstring explains that CPython computes sqlite3_busy_timeout as (int)(timeout*1000), so this yields exactly busy_timeout_ms.\n\nd) apply_sqlite_pragmas(dbapi_connection) -> str | None:\n- Open cursor = dbapi_connection.cursor().\n- In try: cursor.execute('PRAGMA journal_mode=WAL'); row = cursor.fetchone(); mode = str(row[0]).lower() if row else None. On Exception, mode = None.\n- If mode != 'wal': logger.warning('could not enable SQLite WAL journal mode; continuing with journal_mode=%s', mode).\n- Then, in try: cursor.execute('PRAGMA synchronous=NORMAL'). On Exception: logger.warning('could not set SQLite synchronous=NORMAL').\n- Close the cursor in finally and return mode.\n\ne) create_db_engine(database_url: str, *, pool_size: int = 5, max_overflow: int = 10, pool_timeout: float = 30.0, sqlite_busy_timeout_ms: int = 5000) -> Engine:\n- In-memory SQLite: create_engine(database_url, connect_args={'check_same_thread': False, 'timeout': sqlite_timeout_seconds(ms)}). No pool kwargs, no WAL listener.\n- File SQLite: create_engine(database_url, connect_args={same}, pool_size=pool_size, max_overflow=max_overflow, pool_timeout=pool_timeout). Then define a local function _on_connect(dbapi_connection, _record) that calls apply_sqlite_pragmas(dbapi_connection), and register it with event.listen(engine, 'connect', _on_connect).\n- Otherwise: create_engine(database_url, pool_pre_ping=True, pool_size=pool_size, max_overflow=max_overflow, pool_timeout=pool_timeout). No connect_args and no listener.\n- Update the docstring.\n\nf) describe_db_tuning(engine: Engine, settings: Settings) -> dict[str, object]. Build the dict in this key order: 'dialect' (engine.dialect.name), 'pool_class' (type(engine.pool).__name__), 'pool_size', 'max_overflow', 'pool_timeout_seconds'.\n- If isinstance(engine.pool, QueuePool) (from sqlalchemy.pool): pool_size = engine.pool.size(), max_overflow = settings.db_max_overflow, pool_timeout_seconds = engine.pool.timeout(). Otherwise all three are None.\n- If the dialect is 'sqlite', also add 'journal_mode', 'synchronous' and 'busy_timeout_ms'. Read them inside `with engine.connect() as conn:` via conn.exec_driver_sql('PRAGMA journal_mode').scalar(), conn.exec_driver_sql('PRAGMA synchronous').scalar() and conn.exec_driver_sql('PRAGMA busy_timeout').scalar(). On SQLAlchemyError, set the three values to None.\n- Never include the URL, username, password or any settings secret.\n\ng) format_db_tuning(tuning: dict[str, object]) -> str: ' '.join(f'{k}={v}' for k, v in tuning.items()).\n\n(3) app/core/logging.py: extend _EXTRA_FIELDS to ('method', 'path', 'status', 'duration_ms', 'db_tuning'). Nothing else changes.",
+        "files": [
+          "app/core/config.py",
+          "app/core/db.py",
+          "app/core/logging.py"
+        ],
+        "depends_on": [],
+        "fr_ids": [
+          "FR-15",
+          "FR-16",
+          "FR-21"
+        ],
+        "risk": "medium"
+      },
+      {
+        "id": "WP-2",
+        "title": "HEAD support on /healthz and /readyz",
+        "description": "Edit app/api/health.py only.\n\nKeep the existing @router.get('/healthz') healthz and @router.get('/readyz') readyz exactly as they are: same decorators, response_model, summary, responses and JSON bodies. Extract the readiness check into a private helper _check_ready(db: Session) -> None. It contains the existing try: db.execute(text('SELECT 1')) / except Exception: logger.warning('readiness check failed'); raise ServiceUnavailableError('Database is not ready') from None. readyz calls it and returns HealthResponse(status='ready').\n\nAdd two routes:\n- @router.head('/healthz', include_in_schema=False) def healthz_head() -> Response: return Response(status_code=200). It has no dependencies and must never touch the DB.\n- @router.head('/readyz', include_in_schema=False) def readyz_head(db: Annotated[Session, Depends(get_db)]) -> Response: _check_ready(db); return Response(status_code=200).\n\nImport Response from fastapi. These routes rely on the health router being included before the redirect router; main.py already does this and it must not change. Do not use api_route with multiple methods, because it would add HEAD operations to OpenAPI and emit duplicate operationId warnings. Result: POST /healthz and POST /readyz stay 405, and the OpenAPI document is unchanged.",
+        "files": [
+          "app/api/health.py"
+        ],
+        "depends_on": [],
+        "fr_ids": [
+          "FR-14",
+          "FR-21"
+        ],
+        "risk": "low"
+      },
+      {
+        "id": "WP-3",
+        "title": "Lean, contention-tolerant redirect hot path",
+        "description": "(1) app/repositories/link_repository.py:\n- Add class RedirectTarget(NamedTuple) with fields id: int, url: str, is_active: bool, and a docstring.\n- Add LinkRepository.get_redirect_target(self, code: str) -> RedirectTarget | None. It runs stmt = select(Link.id, Link.url, Link.is_active).where(Link.code == code); row = self.session.execute(stmt).one_or_none(); and returns None if row is None, otherwise RedirectTarget(id=row.id, url=row.url, is_active=bool(row.is_active)). It selects only these three columns, never the full entity.\n- Keep get_by_code and add unchanged.\n\n(2) app/services/link_service.py (no FastAPI or Starlette imports):\n- Add a private method _get_redirect_target_or_404(self, code: str) -> RedirectTarget. If not codes.is_valid_code_format(code), raise NotFoundError() with no SQL. Otherwise call self.link_repo.get_redirect_target(code) and raise NotFoundError() if the result is None.\n- resolve_for_redirect(code) -> str: target = self._get_redirect_target_or_404(code); if not target.is_active: raise GoneError(); return target.url. This path issues one SELECT and no INSERT.\n- resolve_and_record_click(code, referrer, user_agent, client_ip) -> str. Keep the signature. The lookup and 410 check (target) stay OUTSIDE the try block, so lookup DB errors propagate and become 503. Then:\n  try:\n      self.click_repo.add(ClickEvent(link_id=target.id, referrer=referrer[:MAX_REFERRER_LEN] if referrer else None, user_agent=user_agent[:MAX_USER_AGENT_LEN] if user_agent else None, ip_hash=hash_ip(client_ip, self.ip_hash_salt)))\n      self.session.commit()\n  except Exception as exc:\n      try: self.session.rollback()\n      except Exception: pass\n      logger.warning('failed to record click for link_id=%s error=%s', target.id, type(exc).__name__)\n  return target.url\n  The click insert MUST go through self.click_repo.add, because an existing test monkeypatches ClickRepository.add. Log exactly one WARNING line, with no exc_info, no exception message, and no IP, referrer or user agent.\n- Keep _get_or_404, get_link_detail, deactivate, create_link, _replay_or_conflict, hash_ip, the constants, and the CreateResult/LinkDetail dataclasses unchanged.\n- Update the module docstring to mention the narrow lookup and the best-effort click under a bounded SQLite busy timeout.",
+        "files": [
+          "app/repositories/link_repository.py",
+          "app/services/link_service.py"
+        ],
+        "depends_on": [],
+        "fr_ids": [
+          "FR-15",
+          "FR-17",
+          "FR-21"
+        ],
+        "risk": "medium"
+      },
+      {
+        "id": "WP-4",
+        "title": "Bounded-memory stats aggregation",
+        "description": "(1) app/repositories/click_repository.py:\n- Keep add(event) and count_for_link(link_id) unchanged; LinkService uses them and tests monkeypatch add.\n- Remove created_at_since.\n- Add a dialect-guarded construct (use from sqlalchemy.ext.compiler import compiles; from sqlalchemy.sql.expression import FunctionElement; from sqlalchemy import Date, cast, func):\n  class UtcDate(FunctionElement): '''Calendar date of a naive-UTC DateTime column.'''; type = Date(); name = 'utc_date'; inherit_cache = True\n  @compiles(UtcDate) def _utc_date_default(element, compiler, **kw): return compiler.process(cast(list(element.clauses)[0], Date()), **kw)  # PostgreSQL and others: CAST(x AS DATE)\n  @compiles(UtcDate, 'sqlite') def _utc_date_sqlite(element, compiler, **kw): return compiler.process(func.date(*element.clauses), **kw)\n  @compiles(UtcDate, 'mysql', 'mariadb') def _utc_date_mysql(element, compiler, **kw): return compiler.process(func.date(*element.clauses), **kw)\n  Do not use any %-formatting or f-strings to build SQL.\n- Add @staticmethod daily_counts_statement(link_id: int, since: datetime) -> Select. It builds day = UtcDate(ClickEvent.created_at) and returns select(day.label('day'), func.count(ClickEvent.id).label('clicks')).where(ClickEvent.link_id == link_id, ClickEvent.created_at >= since).group_by(day).order_by(day).\n- Add daily_counts_since(self, link_id: int, since: datetime) -> list[tuple[date, int]]. It executes the statement and returns [(d if isinstance(d, date) else date.fromisoformat(str(d)), int(n)) for d, n in rows], so the result holds at most one row per day.\n- Add @staticmethod referrer_counts_statement(link_id) -> Select, containing the existing GROUP BY on ClickEvent.referrer with count.\n- referrer_counts(self, link_id) -> list[tuple[str | None, int]] executes it and merges '' into None by summing counts, so missing and empty referrers form one NULL group. The result stays unordered, with one row per referrer group.\n\n(2) app/services/stats_service.py:\n- Replace the Counter-based bucketing with clicks_per_day = sorted(self.click_repo.daily_counts_since(link.id, since)). Remove the Counter import.\n- Keep everything else identical: the signature get_stats(code, days=30, now=None), the format check and 404, the now normalisation (tz-aware converted to naive UTC), start_date = now.date() - timedelta(days=days - 1), since = datetime.combine(start_date, time.min), the all-time total via count_for_link, the referrer sort key (-count, r is None, r or '') with the [:TOP_REFERRERS_LIMIT] cap, and the LinkStats dataclass.\n- Update the module docstring: day buckets are aggregated in SQL with a dialect-guarded UTC date expression, so memory is O(days + referrer groups).\n\nAll tests in tests/test_stats.py must pass unmodified.",
+        "files": [
+          "app/repositories/click_repository.py",
+          "app/services/stats_service.py"
+        ],
+        "depends_on": [],
+        "fr_ids": [
+          "FR-18",
+          "FR-21"
+        ],
+        "risk": "medium"
+      },
+      {
+        "id": "WP-5",
+        "title": "MySQL case-sensitive collation on links.code",
+        "description": "In app/models/link.py change only the code column to:\n\ncode: Mapped[str] = mapped_column(String(32).with_variant(String(32, collation='utf8mb4_bin'), 'mysql', 'mariadb'), nullable=False)\n\nAdd a comment saying that codes are case-sensitive base62, that this affects only fresh MySQL databases, and that existing databases need the DDL in docs/OPERATIONS.md.\n\nConstraints:\n- Do NOT import anything from sqlalchemy.dialects; the existing test bans the string 'sqlalchemy.dialects' in models.\n- type(col.type) must remain sqltypes.String.\n- The UniqueConstraint and the other columns are unchanged.\n- Compiled CreateTable for SQLite and PostgreSQL must be byte-identical to before (VARCHAR(32) NOT NULL). For MySQL it renders VARCHAR(32) COLLATE utf8mb4_bin.",
+        "files": [
+          "app/models/link.py"
+        ],
+        "depends_on": [],
+        "fr_ids": [
+          "FR-19"
+        ],
+        "risk": "low"
+      },
+      {
+        "id": "WP-6",
+        "title": "App factory wiring: tuned engine and startup tuning log",
+        "description": "In app/main.py:\n- Import describe_db_tuning and format_db_tuning from app.core.db.\n- Build the engine with engine = create_db_engine(settings.database_url, pool_size=settings.db_pool_size, max_overflow=settings.db_max_overflow, pool_timeout=settings.db_pool_timeout_seconds, sqlite_busy_timeout_ms=settings.sqlite_busy_timeout_ms).\n- In lifespan, after Base.metadata.create_all(bind=engine) and before yield: tuning = describe_db_tuning(engine, settings); logging.getLogger('app.db').info('database tuning %s', format_db_tuning(tuning), extra={'db_tuning': tuning}). This is exactly one line.\n- Keep everything else unchanged: the API_KEY-unset warning, app.state.settings, engine and session_factory, register_exception_handlers, RequestLoggingMiddleware, the router order (health, links, then redirect LAST), engine.dispose on shutdown, and the module-level app = create_app().\n- Never log settings.database_url or api_key.\n- Update the module docstring to mention the new tuning env vars and the startup log line.",
+        "files": [
+          "app/main.py"
+        ],
+        "depends_on": [
+          "WP-1"
+        ],
+        "fr_ids": [
+          "FR-15",
+          "FR-16",
+          "FR-21"
+        ],
+        "risk": "low"
+      },
+      {
+        "id": "WP-7",
+        "title": "Documentation: README, API reference, runbook and changelog",
+        "description": "Update the docs to match the code. Use these exact names. Remove every statement that there is no authentication ('no authentication', 'Authentication: none').\n\nREADME.md:\n- Replace the Security notice with API-key authentication: /api/links* require the X-API-Key header; a missing or wrong key gives 401 {\"detail\":\"Invalid or missing API key\"} with WWW-Authenticate: ApiKey; if API_KEY is unset every /api/links request is rejected (fail closed, warning logged at startup); the key must be at least 16 characters; redirects and probes stay public; rate limiting stays at the gateway.\n- The configuration table lists DATABASE_URL, BASE_URL, SHORT_CODE_LENGTH, CODE_MAX_ATTEMPTS, IP_HASH_SALT, LOG_LEVEL, API_KEY, SQLITE_BUSY_TIMEOUT_MS (5000, 0-60000), DB_POOL_SIZE (5, \u22651), DB_MAX_OVERFLOW (10, \u22650) and DB_POOL_TIMEOUT_SECONDS (30, >0 and \u2264300), with descriptions. Mention that SQLite file databases get WAL and synchronous=NORMAL automatically.\n- The API overview adds HEAD /healthz and HEAD /readyz, and 401 for /api/links* routes.\n- Add a curl example with -H 'X-API-Key: ...' and curl -I for the probes.\n\ndocs/API.md:\n- Replace 'Authentication: none' with an X-API-Key section.\n- Add 401 to the error table ('Invalid or missing API key') and to each /api/links* endpoint's table.\n- Document HEAD /healthz (200, empty body, no DB) and HEAD /readyz (200 empty; 503 from the readiness check), noting they are not in OpenAPI. Add them to the Contents.\n- GET /{code}: the 503 occurs only when the lookup itself fails. A click-write failure or lock timeout still gives 307.\n- Stats: aggregation is now in SQL, semantics unchanged.\n\ndocs/OPERATIONS.md:\n- Fix the Security notes (API key, fail closed).\n- Health checks: add the HEAD rows and a Kubernetes or uptime-monitor note.\n- Logs table: change the click failure row to app.services.links WARNING 'failed to record click for link_id=<id> error=<ExceptionClass>' (no traceback). Add app.db INFO 'database tuning ...' (fields dialect, pool_class, pool_size, max_overflow, pool_timeout_seconds, journal_mode, synchronous, busy_timeout_ms; in JSON under db_tuning; never the URL or secrets). Add app.db WARNING 'could not enable SQLite WAL journal mode; continuing with journal_mode=<mode>'.\n- New 'SQLite WAL and backups' section:\n  - WAL creates shortener.db-wal and shortener.db-shm side files.\n  - Back up with sqlite3 shortener.db \".backup backup.db\" while running, or stop the service and copy all three files.\n  - WAL needs a writable local directory and does not work on network filesystems (NFS/SMB).\n  - Upgrading from the previous version switches to WAL automatically with no manual step.\n- Rewrite 'SQLite \"database is locked\"': with WAL, redirect lookups are not blocked by writers. A click write waits up to SQLITE_BUSY_TIMEOUT_MS, then is dropped and logged, and the redirect still returns 307. Creates and deletes waiting longer than the timeout return 503. If the lookup itself cannot run (database unavailable), the redirect returns 503. Remove the old claim that redirects always return 307.\n- Pool sizing guidance:\n  - Single worker: DB_POOL_SIZE + DB_MAX_OVERFLOW should not exceed the server threadpool (40).\n  - PostgreSQL: workers \u00d7 (DB_POOL_SIZE + DB_MAX_OVERFLOW) must stay below max_connections.\n  - In-memory SQLite ignores the pool settings.\n- 'Campaign deployment' section:\n  - Targets: up to ~50 RPS, redirect p95 < 100 ms, best effort, one instance.\n  - Supported topology: one instance, one uvicorn worker (--workers 1 --no-access-log), SQLite with WAL on local disk.\n  - Recommended values: SQLITE_BUSY_TIMEOUT_MS=1000, DB_POOL_SIZE=10, DB_MAX_OVERFLOW=10, DB_POOL_TIMEOUT_SECONDS=10.\n  - Pre-launch checklist: confirm the 'database tuning' startup line shows journal_mode=wal and the expected values; HEAD /healthz and HEAD /readyz return 200 and an external monitor uses HEAD /readyz; a fresh backup has been taken; a short smoke load at ~50 RPS with your existing load tool against a dedicated test link shows p95 < 100 ms; API_KEY is set.\n  - Restart and recovery: a process supervisor with restart=always; after a crash, WAL recovers automatically on next open (keep the -wal file); restore from backup if needed.\n  - Click counts include automated GETs such as preview bots.\n- 'Scaling beyond the campaign profile' section:\n  - Several workers, several replicas or more than ~50 RPS require PostgreSQL, because SQLite stays single-writer.\n  - Steps: add and pin a driver (e.g. psycopg[binary]==<version>) in requirements.txt; set DATABASE_URL=postgresql+psycopg://...; start one instance against a fresh database to create the schema; copy the data (links, then click_events and idempotency_keys, preserving ids, then reset the sequences); size DB_POOL_SIZE and DB_MAX_OVERFLOW per worker.\n  - State explicitly: no PostgreSQL or MySQL driver ships in this release.\n- MySQL note: links.code uses utf8mb4_bin on fresh databases. For existing databases run: ALTER TABLE links MODIFY code VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL; Explain why: case-insensitive collation merges codes that differ only in case.\n- Update 'Stats cost' (SQL aggregation, memory proportional to days) and the Scaling/Workers text (pool configurable). Keep the no-cache guidance.\n\nCHANGELOG.md, under [Unreleased]:\n- Added: API-key authentication (X-API-Key, 401, fail closed, 16-character minimum); HEAD /healthz and HEAD /readyz; SQLITE_BUSY_TIMEOUT_MS, DB_POOL_SIZE, DB_MAX_OVERFLOW and DB_POOL_TIMEOUT_SECONDS; the startup 'database tuning' log line.\n- Changed: SQLite WAL and synchronous=NORMAL; narrow redirect lookup; click-failure log is now a WARNING without traceback; stats daily aggregation in SQL (bounded memory).\n- Fixed: HEAD probes returning 404; the docs' auth statements; the locking runbook.\n- Notes: MySQL utf8mb4_bin collation for links.code with the manual ALTER TABLE for existing databases.",
+        "files": [
+          "README.md",
+          "docs/API.md",
+          "docs/OPERATIONS.md",
+          "CHANGELOG.md"
+        ],
+        "depends_on": [
+          "WP-1",
+          "WP-2",
+          "WP-3",
+          "WP-4",
+          "WP-6"
+        ],
+        "fr_ids": [
+          "FR-20",
+          "FR-19",
+          "FR-15"
+        ],
+        "risk": "low"
+      }
+    ],
+    "dependencies": [
+      "fastapi==0.115.6",
+      "uvicorn==0.32.1",
+      "sqlalchemy==2.0.36",
+      "pydantic==2.10.4",
+      "pydantic-settings==2.7.0",
+      "httpx==0.28.1",
+      "pytest==8.3.4",
+      "pytest-cov==6.0.0"
+    ],
+    "test_strategy": "A separate test agent owns tests/. All 165 existing tests must pass unmodified (tests/test_stats.py in particular). New tests go in new or extended files, each with a docstring 'Covers: <ids>'. Update conftest to pop SQLITE_BUSY_TIMEOUT_MS, DB_POOL_SIZE, DB_MAX_OVERFLOW and DB_POOL_TIMEOUT_SECONDS from the environment. Each test uses an isolated temp-file SQLite database via make_client or create_app(Settings(...)).\n\n1. tests/test_health_and_errors.py (extend), FR-14 and NFR-15:\n   - HEAD /healthz returns 200 with an empty body, using the exploding session_factory and the get_db override.\n   - HEAD /readyz returns 200 with an empty body.\n   - HEAD /readyz with a BrokenSession or a raising get_db returns 503 with no leak marker, 'SELECT' or 'Traceback'.\n   - Spy on LinkRepository.get_by_code and get_redirect_target: they are never called for HEAD probes.\n   - POST /healthz and POST /readyz return 405.\n   - The OpenAPI paths and schema names equal the baseline set, '/{code}' has no 'head' operation, and /healthz has only 'get'.\n2. tests/test_db_tuning.py (new), FR-15, FR-16, NFR-16, NFR-18:\n   - Settings defaults (5000/5/10/30.0), env overrides, and rejection of SQLITE_BUSY_TIMEOUT_MS=-1 and 60001, DB_POOL_SIZE=0, DB_MAX_OVERFLOW=-1, DB_POOL_TIMEOUT_SECONDS=0 and 301.\n   - Pragmas on an engine connection: journal_mode 'wal', synchronous 1, busy_timeout equals the setting (0, 200, 5000, 60000).\n   - 'sqlite://' and 'sqlite:///:memory:' apps start and serve /healthz and /readyz.\n   - engine.pool.size(), engine.pool._max_overflow and engine.pool.timeout() match the settings.\n   - For non-SQLite, monkeypatch app.core.db.create_engine to capture kwargs: pool_pre_ping=True plus the pool args, no 'timeout' or check_same_thread connect_args, no connect listener.\n   - apply_sqlite_pragmas with a fake connection whose cursor raises: tolerated, WARNING logged.\n   - is_sqlite_memory_url cases.\n   - Startup caplog: an 'app.db' record with message starting 'database tuning' and record.db_tuning containing dialect, pool_size, max_overflow, pool_timeout_seconds, journal_mode, synchronous and busy_timeout_ms. A DATABASE_URL with a password-like marker and API_KEY never appear in caplog.\n   - Upgrade test: create a rollback-journal DB file with plain sqlite3 and the old schema (or create_all on a non-WAL engine), then start the app: journal_mode becomes wal, and a redirect and stats succeed.\n   - CreateTable(Link/ClickEvent/IdempotencyKey) compiled for the sqlite and postgresql dialects equals the baseline strings. The MySQL compile of links contains 'COLLATE utf8mb4_bin'.\n   - requirements.txt equals the baseline 8 pinned lines.\n3. tests/test_redirect_hot_path.py (new), FR-15, FR-17, NFR-12, NFR-14:\n   - SQL statement counter via event.listen(engine, 'before_cursor_execute'). GET gives exactly 1 SELECT on links (columns id, url, is_active only) and 1 INSERT into click_events. Count COMMITs via the engine 'commit' event. HEAD gives 1 SELECT and 0 INSERT; malformed codes give 0 statements; unknown and deactivated codes give 1 SELECT and 0 INSERT.\n   - Lock test: SQLITE_BUSY_TIMEOUT_MS=200 and a second sqlite3 connection holding BEGIN IMMEDIATE with an uncommitted insert. GET returns 307 with the exact Location in < 700 ms, no click is persisted, and exactly one WARNING record from 'app.services.links' contains neither 'testclient' nor the X-Forwarded-For value. HEAD returns 307; a deactivated link returns 410.\n   - Fault injection: monkeypatch session commit or ClickRepository.add to raise OperationalError, then assert 307, rollback (the next GET persists a click), and one WARNING without the IP.\n   - Lookup failure (monkeypatch LinkRepository.get_redirect_target to raise OperationalError) returns 503 JSON with no leak.\n   - Case sensitivity: /AbC1234 and /abc1234 resolve independently on SQLite.\n4. tests/test_stats_aggregation.py (new), FR-18, NFR-13:\n   - ClickRepository has no created_at_since. daily_counts_since returns a list of (date, int) of length \u2264 days, ascending.\n   - referrer_counts merges '' and NULL into None.\n   - ClickRepository.daily_counts_statement(1, datetime(...)) compiles for the sqlite, postgresql and mysql dialects, rendering 'date(' / 'CAST(' / 'DATE(' respectively.\n   - Slow test: 200k seeded clicks (bulk insert through the session, a bounded set of about 6 referrers including NULL). GET /stats?days=365 returns 200 in < 2 s, with a tracemalloc peak at most 2\u00d7 the 2k-click peak.\n5. tests/test_docs.py (new), FR-20, NFR-20:\n   - Every Settings field's env name (upper-cased) appears in README.md.\n   - No doc contains 'no authentication' or 'Authentication: none'.\n   - README, API.md and OPERATIONS.md mention X-API-Key and 401.\n   - API.md mentions HEAD /healthz and HEAD /readyz.\n   - OPERATIONS.md has the headings 'Campaign deployment' (mentioning HEAD /readyz, 50 RPS and p95 < 100 ms) and 'Scaling beyond the campaign profile' (mentioning PostgreSQL and psycopg), and mentions -wal, -shm and .backup.\n   - CHANGELOG [Unreleased] mentions API key, HEAD, WAL, DB_POOL_SIZE, stats and utf8mb4_bin.\n6. tests/test_perf_concurrency.py (new, slow), NFR-10 and NFR-19:\n   - A paced open-loop run at 50 RPS for 20 s (1,000 requests, 95% GET over 1,000 seeded links, 5% POST) with a ThreadPoolExecutor of 16 workers: no 5xx, redirect p95 < 100 ms, clicks == successful GETs minus logged failures.\n   - An unpaced burst of 2,000 requests from 16 threads: no 5xx, p95 < 250 ms, clicks + logged failures == successful GETs.\n7. The existing NFR-4 performance test, plus the AST, architecture and privacy tests, run unchanged. Coverage must be \u2265 99% with pytest --cov=app.",
+    "config": [
+      "DATABASE_URL (default sqlite:///./shortener.db). Unchanged. Never logged.",
+      "BASE_URL (default http://localhost:8000). Unchanged.",
+      "SHORT_CODE_LENGTH (default 7, 4-32). Unchanged.",
+      "CODE_MAX_ATTEMPTS (default 5, 1-20). Unchanged.",
+      "IP_HASH_SALT (default unset; blank means unset). Unchanged.",
+      "LOG_LEVEL (default INFO). Unchanged.",
+      "API_KEY (default unset means fail closed: all /api/links* return 401; minimum 16 characters). Unchanged. Never logged.",
+      "SQLITE_BUSY_TIMEOUT_MS (default 5000; integer 0-60000). New. SQLite busy_timeout per connection. Campaign recommendation: 1000.",
+      "DB_POOL_SIZE (default 5; integer \u22651). New. QueuePool size for file SQLite and server databases; ignored for in-memory SQLite. Campaign recommendation: 10.",
+      "DB_MAX_OVERFLOW (default 10; integer \u22650). New. QueuePool overflow. Campaign recommendation: 10.",
+      "DB_POOL_TIMEOUT_SECONDS (default 30; number >0 and \u2264300). New. Pool checkout timeout. Campaign recommendation: 10."
+    ]
+  }
+}

@@ -1,0 +1,398 @@
+[
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: This is a greenfield project; the workspace contains only .gitignore.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792086002.121748
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: The API is JSON over HTTP, with management routes under /api/links and redirects at the root path /{code}.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792086002.121749
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Codes are 7 base62 characters (about 3.5e12 combinations) generated with `secrets`, with up to 5 retries on collision.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792086002.12175
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: short_url is built from the BASE_URL env var (default http://localhost:8000).",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792086002.121751
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Original URLs are stored exactly as submitted (no normalization), apart from validation.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792086002.121751
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: All timestamps are stored and returned in UTC, in ISO 8601 format.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792086002.121752
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Schema creation uses Base.metadata.create_all at startup; migrations (Alembic) are not required in this iteration.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792086002.121753
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Click recording is synchronous, in the same transaction scope as the redirect request.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792086002.121755
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Validation errors use FastAPI's 422 with a 'detail' key (Pydantic's error list is acceptable as the detail value).",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792086002.1217558
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Rate limiting and abuse protection are handled by infrastructure (reverse proxy/API gateway) for now.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792086002.121757
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-1 assumed default: No authentication in this iteration. The endpoints are designed so an API-key dependency can be added later on the /api router without changing the contract. Recorded as a risk.",
+    "rationale": "Without auth, anyone who knows a code can deactivate a link or read its stats. Per-user ownership would add a users model and change every endpoint.",
+    "alternatives": [
+      "No authentication (open API)",
+      "A single static API key from the API_KEY env var, sent as an X-API-Key header",
+      "Per-user accounts with link ownership"
+    ],
+    "based_on": {},
+    "ts": 1792086002.135663
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-2 assumed default: 410 Gone with a JSON 'detail' key.",
+    "rationale": "Affects only the redirect handler's status code and its test.",
+    "alternatives": [
+      "410 Gone",
+      "404 Not Found (indistinguishable from unknown)"
+    ],
+    "based_on": {},
+    "ts": 1792086002.1356642
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-3 assumed default: Global scope, no expiry in this iteration. A replay with the same payload returns 201 and the identical body plus 'Idempotent-Replayed: true'. A different payload returns 409.",
+    "rationale": "Affects the idempotency table design and how the responses are asserted.",
+    "alternatives": [
+      "Keys kept forever, global scope, replay returns the original 201 body",
+      "Keys expire after 24h",
+      "Replay returns 200"
+    ],
+    "based_on": {},
+    "ts": 1792086002.135665
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-4 assumed default: Not supported. Random codes only, no expiry.",
+    "rationale": "Would add fields, validation and conflict handling.",
+    "alternatives": [
+      "No (random codes only, no expiry)",
+      "Custom aliases",
+      "Expiry timestamps"
+    ],
+    "based_on": {},
+    "ts": 1792086002.135666
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-5 assumed default: Use the NFR-4 targets. Click recording is synchronous, in the same request.",
+    "rationale": "Hard SLOs could require caching or async workers for click recording.",
+    "alternatives": [
+      "Targets as in NFR-4 (p95 < 50 ms redirect on SQLite)",
+      "Externally specified SLOs"
+    ],
+    "based_on": {},
+    "ts": 1792086002.1356668
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-6 assumed default: Last 30 days by default (configurable with 'days'), top 10 referrers, and total_clicks counted all-time.",
+    "rationale": "Affects the stats query and its response size.",
+    "alternatives": [
+      "Last 30 days and top 10 referrers, with a 'days' query parameter (1\u2013365)",
+      "All-time daily series"
+    ],
+    "based_on": {},
+    "ts": 1792086002.1356668
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-7 assumed default: Use the socket peer address (request.client.host). Ignore X-Forwarded-For unless a future TRUSTED_PROXIES setting is added.",
+    "rationale": "Affects only the value that gets hashed. Raw IPs are never stored either way.",
+    "alternatives": [
+      "Socket peer address only",
+      "First X-Forwarded-For entry when trusted"
+    ],
+    "based_on": {},
+    "ts": 1792086002.135668
+  },
+  {
+    "node_id": "design",
+    "actor": "policy:auto-approve",
+    "title": "design approved",
+    "rationale": "auto-approved: kind is auto-approvable under policy.autonomy",
+    "alternatives": [],
+    "based_on": {
+      "subject": "11c250168727b1ab"
+    },
+    "ts": 1792086309.3499992
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-1: Strict layering with services owning transactions",
+    "rationale": "Routers in app/api depend only on services, schemas and core. Services accept a SQLAlchemy Session plus plain config values, use repositories, and alone call commit()/rollback(). Repositories only add/flush/query. Models import only sqlalchemy. Domain exceptions live in app/core/errors.py, which keeps services free of FastAPI imports. \u2014 Meets NFR-6, makes services unit-testable without HTTP, and puts the transaction boundaries needed for the retry/replay logic (NFR-5) in one place.",
+    "alternatives": [
+      "Fat routers that call the ORM directly",
+      "Unit-of-work abstraction (unnecessary for this size)"
+    ],
+    "based_on": {
+      "requirements_spec": "f9e39c09ed667d11"
+    },
+    "ts": 1792086309.343731
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-2: Random base62 codes backed by a DB unique constraint and retry",
+    "rationale": "codes.generate_code(length) uses secrets.choice over [A-Za-z0-9]. The service inserts and flushes. On IntegrityError it rolls back and retries with a new code, up to CODE_MAX_ATTEMPTS (default 5). A reserved candidate (compared case-insensitively against RESERVED_CODES) uses up an attempt and is regenerated. When attempts run out the service raises a 503. \u2014 With 62^7 \u2248 3.5e12 codes collisions are rare. The DB constraint guarantees uniqueness across instances (NFR-5, NFR-9). Codes are unguessable (NFR-2, R-1).",
+    "alternatives": [
+      "Hash of the URL (deterministic, enables enumeration, conflicts with the no-dedup rule)",
+      "Sequential ID encoded in base62 (guessable)",
+      "Pre-check with SELECT before insert (racy without the constraint anyway)"
+    ],
+    "based_on": {
+      "requirements_spec": "f9e39c09ed667d11"
+    },
+    "ts": 1792086309.343734
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-3: Idempotency via a table with a unique key and request hash, written in the link's transaction",
+    "rationale": "If the key exists: a matching request_hash replays the stored link (201, Idempotent-Replayed: true), and a different hash returns 409. Otherwise the link is inserted and flushed, then the key row is inserted and flushed in the same transaction, then the transaction commits. An IntegrityError on the key flush (a concurrent winner) rolls back both rows, after which the service re-reads the key and replays or returns 409. Keys are global and never expire (Q-3). Replays are rebuilt from the stored link row. \u2014 The DB constraint guarantees at most one link per key even with concurrent requests or several instances (FR-4, R-7). It never returns 500.",
+    "alternatives": [
+      "Store the full response body JSON",
+      "In-memory cache (violates NFR-9)",
+      "Key expiry after 24h (deferred)"
+    ],
+    "based_on": {
+      "requirements_spec": "f9e39c09ed667d11"
+    },
+    "ts": 1792086309.3437362
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-4: App factory with a per-app engine on app.state",
+    "rationale": "create_app(settings=None) builds Settings() when none are given, creates the engine and sessionmaker, and stores settings, engine and session_factory on app.state. get_db(request) and get_settings(request) read from app.state. Tables are created by Base.metadata.create_all(engine) in the lifespan startup, and the engine is disposed on shutdown. \u2014 Each test gets an isolated DB by passing Settings(database_url=tmp). There are no import-time side effects and no global mutable state (NFR-7, NFR-9).",
+    "alternatives": [
+      "Module-level global engine with dependency overrides",
+      "lru_cache'd get_settings (stale across tests)",
+      "Alembic migrations (out of scope)"
+    ],
+    "based_on": {
+      "requirements_spec": "f9e39c09ed667d11"
+    },
+    "ts": 1792086309.343738
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-5: Naive-UTC timestamps and Python-side day bucketing",
+    "rationale": "All DateTime columns are portable naive DateTime values holding UTC (models.base.utcnow() = datetime.now(timezone.utc).replace(tzinfo=None)). Response schemas convert to tz-aware UTC on output. clicks_per_day fetches only created_at for rows in the window and groups by .date() in Python. top_referrers uses SQL GROUP BY referrer, followed by a deterministic Python sort and a cut to 10. \u2014 Avoids database-specific date functions and NULL ordering differences (R-6, FR-12), and gives identical serialization for replays.",
+    "alternatives": [
+      "func.date() GROUP BY in SQL (return type differs per DB)",
+      "timezone-aware columns (SQLite drops tzinfo anyway)"
+    ],
+    "based_on": {
+      "requirements_spec": "f9e39c09ed667d11"
+    },
+    "ts": 1792086309.3437388
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-6: Raw 307 Response for redirects; ASCII-only target URLs",
+    "rationale": "The redirect handler returns Response(status_code=307, headers={'Location': url, 'Cache-Control': 'no-store'}) instead of starlette's RedirectResponse, which percent-quotes the URL. URL validation additionally rejects non-ASCII characters (clients must send punycode or percent-encoded URLs). \u2014 FR-5 requires Location to equal the stored URL exactly. Response headers are latin-1 encoded, so non-ASCII would otherwise cause 500s.",
+    "alternatives": [
+      "RedirectResponse (alters the URL)",
+      "Normalize/IDNA-encode on input (violates the store-unchanged assumption)"
+    ],
+    "based_on": {
+      "requirements_spec": "f9e39c09ed667d11"
+    },
+    "ts": 1792086309.343742
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-7: Centralized JSON error handling with a middleware catch-all",
+    "rationale": "AppError subclasses carry status_code and detail: BadRequestError 400, NotFoundError 404, ConflictError 409, GoneError 410, ServiceUnavailableError 503. Handlers are registered for AppError, StarletteHTTPException (404/405, keeping headers such as Allow), RequestValidationError (422), SQLAlchemyError (503 'Service temporarily unavailable', logged), and Exception (500). RequestLoggingMiddleware also wraps call_next in try/except: an exception is logged with its traceback and answered with 500 {\"detail\": \"Internal Server Error\"}. \u2014 Meets FR-11 and NFR-3: error bodies never contain exception text, and DB outages become 503 rather than 500.",
+    "alternatives": [
+      "Per-route try/except",
+      "Relying on FastAPI defaults (the 500 is plain text)"
+    ],
+    "based_on": {
+      "requirements_spec": "f9e39c09ed667d11"
+    },
+    "ts": 1792086309.343743
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-8: Synchronous, best-effort click recording",
+    "rationale": "After resolving an active link, the service inserts a ClickEvent and commits in its own small transaction. Any exception rolls back and is logged (logger.exception, without the IP), and the 307 is still returned. HEAD requests never record clicks. \u2014 Q-5 default: the redirect must not fail because of analytics (FR-8, R-4). HEAD is not a real visit.",
+    "alternatives": [
+      "Background tasks / async queue (out of scope)",
+      "Failing the redirect when recording fails"
+    ],
+    "based_on": {
+      "requirements_spec": "f9e39c09ed667d11"
+    },
+    "ts": 1792086309.343746
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-9: No authentication in this iteration",
+    "rationale": "The /api/links router has no auth dependency, but is structured so that a future Depends(require_api_key) can be added at router level without changing the contract. \u2014 Q-1 default; tracked as a risk.",
+    "alternatives": [
+      "Static X-API-Key",
+      "Per-user accounts"
+    ],
+    "based_on": {
+      "requirements_spec": "f9e39c09ed667d11"
+    },
+    "ts": 1792086309.343748
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-10: Readiness via the shared get_db dependency",
+    "rationale": "/readyz declares db: Session = Depends(get_db) and runs db.execute(text('SELECT 1')) inside try/except Exception, raising ServiceUnavailableError('Database is not ready') on failure. If an overridden get_db itself raises a SQLAlchemyError, the global SQLAlchemyError handler returns 503 too. \u2014 Tests can simulate a DB outage through app.dependency_overrides[get_db] (FR-10). No exception text is leaked.",
+    "alternatives": [
+      "Probe via app.state.engine directly (overrides would not apply)"
+    ],
+    "based_on": {
+      "requirements_spec": "f9e39c09ed667d11"
+    },
+    "ts": 1792086309.34375
+  },
+  {
+    "node_id": "plan",
+    "actor": "agent:planner",
+    "title": "Execution plan: 5 packages in 3 waves",
+    "rationale": "waves [['WP-1', 'WP-2', 'WP-3'], ['WP-4'], ['WP-5']]; packages in the same wave own disjoint files and run in parallel",
+    "alternatives": [],
+    "based_on": {
+      "design": "69d249761c25951f"
+    },
+    "ts": 1792086309.364746
+  },
+  {
+    "node_id": "impl:WP-1",
+    "actor": "policy:auto-approve",
+    "title": "change approved",
+    "rationale": "auto-approved: kind is auto-approvable under policy.autonomy",
+    "alternatives": [],
+    "based_on": {
+      "subject": "39dbb4328df74592"
+    },
+    "ts": 1792086375.382545
+  },
+  {
+    "node_id": "impl:WP-4",
+    "actor": "policy:auto-approve",
+    "title": "change approved",
+    "rationale": "auto-approved: kind is auto-approvable under policy.autonomy",
+    "alternatives": [],
+    "based_on": {
+      "subject": "43ff7bbff6c3eb79"
+    },
+    "ts": 1792086456.023895
+  },
+  {
+    "node_id": "impl:WP-5",
+    "actor": "human:kajalmahata",
+    "title": "policy_exception approved",
+    "rationale": "IP is HMAC-SHA256 pseudonymised in services/link_service.hash_ip before storage (NULL without salt); router only forwards it.",
+    "alternatives": [],
+    "based_on": {
+      "subject": "5f8749dbb83114ad"
+    },
+    "ts": 1792087011.274444
+  },
+  {
+    "node_id": "repair-1",
+    "actor": "policy:auto-approve",
+    "title": "change approved",
+    "rationale": "auto-approved: kind is auto-approvable under policy.autonomy",
+    "alternatives": [],
+    "based_on": {
+      "subject": "0dad29e5e0ea81cd"
+    },
+    "ts": 1792088268.538791
+  },
+  {
+    "node_id": "release_gate",
+    "actor": "human:kajalmahata",
+    "title": "release approved",
+    "rationale": "Release approved after review of readiness checklist, security findings (0 high) and metrics.",
+    "alternatives": [],
+    "based_on": {
+      "subject": "5db4ba24a19900f2"
+    },
+    "ts": 1792088648.762432
+  }
+]

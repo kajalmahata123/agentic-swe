@@ -1,0 +1,20 @@
+{
+  "name": "integration",
+  "version": 1,
+  "hash": "c3c6296530ae46b0",
+  "producer": "integrate",
+  "derived_from": {},
+  "value": {
+    "merged": [
+      "impl:WP-1",
+      "impl:WP-2",
+      "impl:WP-3",
+      "impl:WP-4",
+      "impl:WP-5",
+      "impl:WP-6",
+      "impl:WP-7"
+    ],
+    "imports": true,
+    "head": "83aa0ec086779ddc0c69b36ccc952264a30dac67"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "impl_report:WP-6",
+  "version": 1,
+  "hash": "194553f47de824f8",
+  "producer": "impl:WP-6",
+  "derived_from": {
+    "requirements_spec": "177a1306cb37a92f",
+    "design": "4546f8f39faeb8aa"
+  },
+  "value": {
+    "summary": "Implemented WP-6. links.py: _detail_response helper (adds expires_at/is_expired) used by GET detail and the new PATCH /api/links/{code} (update_link_expiry -> service.set_expiry); create_link passes payload.expires_at and returns expires_at, with the extended 422 description; new GET /api/links/{code}/stats/hourly (get_hourly_stats with optional start/end datetime Query params -> service.get_hourly_clicks, mapped to LinkHourlyStatsResponse/HourlyClicks). redirect.py: GET and HEAD /{code} catch NotFoundError/GoneError and return JSON {detail} with Cache-Control: no-store via _error_response; other errors propagate (SQLAlchemyError -> 503); OpenAPI documents the expired 410 and a 503; HEAD stays out of the schema; _redirect_response unchanged. main.py: create_db_engine gets pool_size/max_overflow/pool_timeout/sqlite_busy_timeout_ms from settings; lifespan runs create_all -> ensure_links_expires_at (failure aborts startup) -> log_engine_tuning -> yield -> dispose; router order unchanged; docstring updated (one uvicorn worker on SQLite, startup schema upgrade).",
+    "files_changed": [
+      "app/api/links.py",
+      "app/api/redirect.py",
+      "app/main.py"
+    ],
+    "notes": [
+      "python -m compileall -q app succeeded; python -m ruff check app passes; the full existing test suite passes (python -m pytest -q, exit 0).",
+      "app/api/deps.py is unchanged, as the design requires.",
+      "An unparseable start/end on the hourly endpoint returns 422 from FastAPI request validation ({detail: [...]}); the range rules (both or neither, start < end, at most 744 hours, out of range) return 422 from the service's InvalidInputError ({detail: str}).",
+      "The redirect 404/410 now carries Cache-Control: no-store on both GET and HEAD; the 410 detail is 'Link has been deactivated' (which takes precedence) or 'Link has expired'."
+    ],
+    "open_issues": [
+      "No tests yet for the new endpoints or behaviour (PATCH, hourly stats, expiry 410, no-store on 404/410, startup schema upgrade). These belong to the separate test agent's package per the design's test strategy."
+    ]
+  }
+}

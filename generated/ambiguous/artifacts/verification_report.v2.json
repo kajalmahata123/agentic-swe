@@ -1,0 +1,96 @@
+{
+  "name": "verification_report",
+  "version": 2,
+  "hash": "1e8b79d71d6dca2b",
+  "producer": "verify-2",
+  "derived_from": {
+    "design": "4546f8f39faeb8aa",
+    "requirements_spec": "177a1306cb37a92f",
+    "test_report": "85102742d8869749"
+  },
+  "value": {
+    "head": "54020f9cc58e16118bfaab4e63fa7493f6a2e119",
+    "gates": [
+      {
+        "name": "compile",
+        "passed": true,
+        "detail": "ok",
+        "severity": "block"
+      },
+      {
+        "name": "lint_correctness",
+        "passed": true,
+        "detail": "All checks passed!",
+        "severity": "block"
+      },
+      {
+        "name": "tests_pass",
+        "passed": true,
+        "detail": "404 passed, 0 failed, 0 errors",
+        "severity": "block"
+      },
+      {
+        "name": "coverage",
+        "passed": true,
+        "detail": "99.78% (minimum 80.0%)",
+        "severity": "block"
+      },
+      {
+        "name": "api_contract",
+        "passed": true,
+        "detail": "9 contract endpoints implemented",
+        "severity": "block"
+      },
+      {
+        "name": "requirements_traceability",
+        "passed": true,
+        "detail": "11 must-FRs traced",
+        "severity": "block"
+      },
+      {
+        "name": "policy_scan_full_tree",
+        "passed": true,
+        "detail": "1 non-blocking findings",
+        "severity": "block"
+      }
+    ],
+    "passed": true,
+    "tests": {
+      "code": 0,
+      "passed": 404,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "coverage": 99.78,
+      "output": "........................................................................ [ 17%]\n........................................................................ [ 35%]\n........................................................................ [ 53%]\n........................................................................ [ 71%]\n........................................................................ [ 89%]\n............................................                             [100%]\n================================ tests coverage ================================\n_______________ coverage: platform darwin, python 3.11.9-final-0 _______________\n\nCoverage JSON written to file coverage.json\n404 passed in 80.15s (0:01:20)"
+    },
+    "coverage": 99.78,
+    "contract": {
+      "missing": [],
+      "undocumented": []
+    },
+    "traceability": {
+      "FR-14": true,
+      "FR-15": true,
+      "FR-16": true,
+      "FR-18": true,
+      "FR-20": true,
+      "FR-21": true,
+      "FR-22": true,
+      "FR-23": true,
+      "FR-24": true,
+      "FR-25": true,
+      "FR-26": true
+    },
+    "policy_findings": [
+      {
+        "rule": "CHG-001",
+        "title": "protected path modified (change control)",
+        "severity": "approve",
+        "path": "requirements.txt",
+        "line": null,
+        "snippet": ""
+      }
+    ]
+  }
+}

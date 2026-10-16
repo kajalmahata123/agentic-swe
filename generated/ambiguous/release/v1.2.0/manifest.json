@@ -1,0 +1,113 @@
+{
+  "run_id": "run_9f7e81be929b",
+  "tag": "v1.2.0",
+  "commit": "54020f9cc58e16118bfaab4e63fa7493f6a2e119",
+  "bundle": "service-v1.2.0.tar.gz",
+  "sha256": "651fc9b1ff44e5aa439bb30343e7d1e0e03ee4218d2be4c8df50be7ca25f9e8d",
+  "sbom": [
+    "fastapi==0.115.6",
+    "uvicorn==0.32.1",
+    "sqlalchemy==2.0.36",
+    "pydantic==2.10.4",
+    "pydantic-settings==2.7.0",
+    "httpx==0.28.1",
+    "pytest==8.3.4",
+    "pytest-cov==6.0.0"
+  ],
+  "approvals": [
+    {
+      "kind": "clarification",
+      "status": "approved",
+      "by": "human:kajalmahata",
+      "node": "clarify",
+      "comment": "Product owner answers"
+    },
+    {
+      "kind": "design",
+      "status": "approved",
+      "by": "human:kajalmahata",
+      "node": "design",
+      "comment": "Approved: matches the answered targets (modest load, hardened SQLite)."
+    },
+    {
+      "kind": "design",
+      "status": "approved",
+      "by": "human:claude-on-behalf-of-kajalmahata",
+      "node": "design",
+      "comment": "Delegated routine approval: all exit gates passed; reviewed summary."
+    },
+    {
+      "kind": "change",
+      "status": "approved",
+      "by": "human:claude-on-behalf-of-kajalmahata",
+      "node": "impl:WP-1",
+      "comment": "Delegated routine approval: all exit gates passed; reviewed summary."
+    },
+    {
+      "kind": "change",
+      "status": "approved",
+      "by": "human:claude-on-behalf-of-kajalmahata",
+      "node": "impl:WP-4",
+      "comment": "Delegated routine approval: all exit gates passed; reviewed summary."
+    },
+    {
+      "kind": "change",
+      "status": "approved",
+      "by": "human:claude-on-behalf-of-kajalmahata",
+      "node": "tests",
+      "comment": "Delegated routine approval: all exit gates passed; reviewed summary."
+    },
+    {
+      "kind": "change",
+      "status": "approved",
+      "by": "human:claude-on-behalf-of-kajalmahata",
+      "node": "repair-1",
+      "comment": "Delegated routine approval: all exit gates passed; reviewed summary."
+    },
+    {
+      "kind": "release",
+      "status": "approved",
+      "by": "human:kajalmahata",
+      "node": "release_gate",
+      "comment": "Release approved: all readiness checks passed; amendment scope delivered."
+    }
+  ],
+  "checklist": [
+    {
+      "name": "verification_passed",
+      "passed": true,
+      "detail": "head 54020f9cc58e16118bfaab4e63fa7493f6a2e119",
+      "severity": "block"
+    },
+    {
+      "name": "coverage_threshold",
+      "passed": true,
+      "detail": "99.78% >= 80.0%",
+      "severity": "block"
+    },
+    {
+      "name": "design_approved",
+      "passed": true,
+      "detail": "architecture approved by human:claude-on-behalf-of-kajalmahata",
+      "severity": "block"
+    },
+    {
+      "name": "security_clear",
+      "passed": true,
+      "detail": "0 high/critical findings",
+      "severity": "block"
+    },
+    {
+      "name": "documentation",
+      "passed": true,
+      "detail": "docs agent output present",
+      "severity": "block"
+    },
+    {
+      "name": "workspace_head_verified",
+      "passed": true,
+      "detail": "nothing merged after the last verification",
+      "severity": "block"
+    }
+  ]
+}

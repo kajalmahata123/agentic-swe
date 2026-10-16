@@ -1,0 +1,32 @@
+{
+  "name": "impl_report:WP-5",
+  "version": 1,
+  "hash": "a04b1952d3cf67e9",
+  "producer": "impl:WP-5",
+  "derived_from": {
+    "requirements_spec": "f9e39c09ed667d11",
+    "design": "69d249761c25951f"
+  },
+  "value": {
+    "summary": "I implemented WP-5: the dependency providers, the links / redirect / health routers, and the `create_app()` factory with a module-level `app`, all matching the design and the merged WP-1..WP-4 code. No tests exist yet, so the endpoints have never been called. Compile, lint and a module import check pass. I deviated from the spec's `param=Depends(...)` default-argument style and used `Annotated[...]` instead, because ruff fails on the default-argument form (rule B008, which bans function calls in argument defaults); behaviour is unchanged.",
+    "files_changed": [
+      "app/api/__init__.py",
+      "app/api/deps.py",
+      "app/api/links.py",
+      "app/api/redirect.py",
+      "app/api/health.py",
+      "app/main.py"
+    ],
+    "notes": [
+      "Checks run: `python -m compileall -q app` and `python -m ruff check app` pass, and `python -m pip check` is clean. The repository has no tests yet. As a smoke check, `python -m pytest -q --doctest-modules app` imported every module, including `app.main`, so `create_app()` ran and all routes were registered without errors. No requests were sent to any endpoint.",
+      "Lint deviation: I wrote dependencies, headers and query parameters as `Annotated[...]` instead of `param=Depends(...)` defaults. FastAPI treats the two forms identically. So defaults still come after required parameters, `idempotency_key` and `days` moved to the end of their function signatures. Everything else is unchanged: `Idempotency-Key` alias, `days` default 30 with range 1\u2013365, and every dependency still gets its session from `app.core.db.get_db`, which tests override.",
+      "Redirects return a raw `Response(status_code=307, headers={'Location': url, 'Cache-Control': 'no-store'})`, not `RedirectResponse`. HEAD /{code} gives the same response via `resolve_for_redirect`, records no click, and is hidden from the OpenAPI schema.",
+      "`/readyz` catches any exception from `SELECT 1`, logs a warning on `app.health`, and returns 503 'Database is not ready'. The exception text never reaches the response (`raise ... from None`).",
+      "`create_app()` registers routers in this order: health, links, then the catch-all redirect router last. It stores settings, engine and session_factory on `app.state`, and the lifespan runs `create_all` on startup and `engine.dispose()` on shutdown. The module docstring says to run with `uvicorn app.main:app --no-access-log`.",
+      "Every error status in the OpenAPI schema uses the `ErrorResponse` model. Declaring 422 explicitly on POST /api/links and GET /api/links/{code}/stats replaces FastAPI's default `HTTPValidationError` schema there. The actual error body is still `{\"detail\": [...]}`."
+    ],
+    "open_issues": [
+      "No tests exist yet; the test agent still needs to write the suite in the design's test strategy. It should use `with TestClient(create_app(Settings(database_url=...)))` so the lifespan creates the tables. Routes added only for tests need multi-segment paths such as `/_test/boom` so the catch-all `/{code}` route doesn't capture them."
+    ]
+  }
+}

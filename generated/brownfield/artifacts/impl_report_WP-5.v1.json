@@ -1,0 +1,29 @@
+{
+  "name": "impl_report:WP-5",
+  "version": 1,
+  "hash": "50caa5f2f52c827e",
+  "producer": "impl:WP-5",
+  "derived_from": {
+    "requirements_spec": "a29fdf7abe9a8b61",
+    "design": "c09f3c47030c55ea"
+  },
+  "value": {
+    "summary": "I wired the HTTP layer for CR-142. It now passes alias and expires_at through to the service, returns expires_at and is_expired in the create and detail responses, and documents the new 409/410/422 cases in OpenAPI. HEAD /{code} now appears in the schema, and the test clock is passed from app.state.clock into LinkService. Compileall and ruff are clean, and all 165 existing tests pass. The new behaviour itself has not been tested yet: no tests for aliases, expiry or the OpenAPI changes exist so far.",
+    "files_changed": [
+      "app/api/deps.py",
+      "app/api/links.py",
+      "app/api/redirect.py"
+    ],
+    "notes": [
+      "deps.get_link_service now takes `request: Request` as its first parameter and passes `clock=getattr(request.app.state, 'clock', None)` to LinkService. The clock is read on every request, so tests can set `client.app.state.clock`. require_api_key, get_stats_service and build_short_url are unchanged.",
+      "links.create_link calls `service.create_link(payload.url, idempotency_key, alias=payload.alias, expires_at=payload.expires_at)` and adds `expires_at=link.expires_at, is_expired=result.is_expired` to the response. Location and Idempotent-Replayed headers work as before.",
+      "POST /api/links OpenAPI metadata: the 409 and 422 descriptions use the exact wording from the work package; 400, 401 and 503 are kept. The docstring now covers alias and expires_at.",
+      "links.get_link adds `expires_at=link.expires_at, is_expired=detail.is_expired`. deactivate_link and get_stats are untouched.",
+      "redirect.py: the GET /{code} 410 description now reads 'Link has been deactivated or has expired'. HEAD /{code} is now in the schema with status_code=307, response_class=Response, the given summary and 307/404/410 responses. Both handlers behave as before: a raw 307 with the exact Location and Cache-Control: no-store. No security was added to them.",
+      "app/main.py and the router order were not touched."
+    ],
+    "open_issues": [
+      "Tests for aliases, expiry, the OpenAPI changes (FR-13: 409/422 on POST and 410 on GET and HEAD /{code}) and the clock hook are owned by the test agent and don't exist yet."
+    ]
+  }
+}

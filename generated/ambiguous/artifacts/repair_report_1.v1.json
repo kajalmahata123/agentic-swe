@@ -1,0 +1,35 @@
+{
+  "name": "repair_report_1",
+  "version": 1,
+  "hash": "fb0876e5645057f0",
+  "producer": "repair-1",
+  "derived_from": {
+    "requirements_spec": "177a1306cb37a92f",
+    "design": "4546f8f39faeb8aa",
+    "verification_report": "b78e12c410a9787c",
+    "test_report": "85102742d8869749"
+  },
+  "value": {
+    "summary": "Fixed the two root causes behind the 3 failing tests. The full suite now passes: 404 passed, 0 failed, and ruff is clean.\n\n(1) In-memory SQLite returned 503 'no such table: links'. For 'sqlite://' and ':memory:', SQLAlchemy's default SingletonThreadPool gives every thread its own connection, and each connection is a separate empty in-memory database. The tables created at startup were therefore invisible to requests running in FastAPI's worker threads. create_db_engine now uses poolclass=StaticPool (with check_same_thread=False) for in-memory SQLite, so all threads share one connection and one database. Pool sizing is still ignored there, there is no WAL and the pool is not a QueuePool, as FR-15/FR-16 require.\n\n(2) Hourly (and daily) SQL bucketing was wrong for timestamps with sub-millisecond precision. SQLite's date functions round fractional seconds, and the installed SQLite 3.45.1 even maps '2025-12-31 23:59:59.999999' to 2026-01-01; I confirmed this with a probe. The click therefore fell outside the requested range and the 23:00 bucket showed 1 instead of 2. The SQLite day and hour bucket expressions now cut the stored text to whole seconds first: date(substr(created_at, 1, 19)) and strftime('%Y-%m-%d %H:00:00', substr(created_at, 1, 19)). The positions are literal_column, so the bucket expressions still carry no bound parameters. The WHERE range predicates are unchanged, so the (link_id, created_at) index is still used (EXPLAIN test passes). PostgreSQL and MySQL expressions are unchanged.",
+    "files_changed": [
+      "app/core/db.py",
+      "app/repositories/click_repository.py",
+      "tests/test_hourly_stats.py",
+      "tests/test_daily_stats_aggregation.py",
+      "tests/test_zz_probe_tmp.py",
+      "docs/OPERATIONS.md",
+      "CHANGELOG.md"
+    ],
+    "notes": [
+      "Test edit (tests/test_hourly_stats.py, flagged for review): test_hour_bucket_compiles_for_all_dialects (SQLite marker) and test_hourly_query_uses_link_created_at_index (exact compiled SQL and the EXPLAIN QUERY PLAN literal) asserted the old SQLite expression strftime('%Y-%m-%d %H:00:00', click_events.created_at). That expression is numerically wrong for microsecond timestamps, which contradicts FR-25/NFR-22 and the failing test_hourly_bucketing_exact_for_sub_millisecond_timestamps. I updated these assertions to the corrected expression with substr(click_events.created_at, 1, 19). The other assertions (no bucket bind params, 3 params total, GROUP BY, half-open range, index use) are unchanged.",
+      "Test edit (tests/test_daily_stats_aggregation.py, flagged for review): the SQLite marker in test_daily_bucket_compiles_for_all_dialects changed from 'date(click_events.created_at)' to 'date(substr(click_events.created_at, 1, 19))' for the same reason. I also added test_daily_bucketing_exact_at_year_end_sub_millisecond. It reproduces the same SQLite bug on the daily path: 2025-12-31 23:59:59.999999 was bucketed as 2026-01-01, which breaks the FR-18 'semantics unchanged' rule. The existing sub-ms daily test only passed because it used a date that SQLite happens not to mis-handle.",
+      "New test file tests/test_zz_probe_tmp.py (flagged for review): I created it first as a temporary probe to reproduce the SQLite date-function behaviour, then turned it into a real regression test. It runs the SQLite day and hour bucket expressions against a real database for edge timestamps: year-end .999999, top of hour .999700, leap day and the exact boundary. The tool set has no delete command, so the file name stays as created; a reviewer may rename it to tests/test_sqlite_bucket_precision.py.",
+      "Design deviation (small): ADR-1/WP-1 said in-memory SQLite gets 'only check_same_thread=False'. With the default pool this cannot satisfy FR-15 ('serves requests without error'), so StaticPool is added. It is still not a QueuePool, gets no pool kwargs and no WAL, and only affects 'sqlite://'-style URLs used by tests.",
+      "Docs: OPERATIONS.md (pool sizing section and tuning-line notes) and CHANGELOG [Unreleased] (Changed: in-memory SQLite uses StaticPool; Fixed: exact sub-ms stats bucketing and the in-memory 'no such table' fix) were updated. The public API contract is unchanged."
+    ],
+    "open_issues": [
+      "tests/test_zz_probe_tmp.py should be renamed (e.g. to tests/test_sqlite_bucket_precision.py). The content is a proper regression test, but the tools cannot delete or rename files.",
+      "MySQL DATETIME columns without fractional-second precision round microseconds on insert. This is a pre-existing storage behaviour, outside this repair and not relevant to the SQLite production profile."
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "impl_report:WP-3",
+  "version": 1,
+  "hash": "40a2f1338a6b1d3b",
+  "producer": "impl:WP-3",
+  "derived_from": {
+    "requirements_spec": "f9e39c09ed667d11",
+    "design": "69d249761c25951f"
+  },
+  "value": {
+    "summary": "I wrote WP-3: the Pydantic v2 schemas and the strict URL check for FR-2. The three files follow the package spec and import nothing from other app packages. `compileall` and `ruff` pass, and I tested the behaviour with a temporary doctest suite that passed and that I then deleted. There is no `tests/` directory yet, so no project tests have run.\n\n- **URL check (`validate_target_url`):** it applies the rules in the order the spec lists them and returns the input unchanged. Every rejection raises a `ValueError` with a short message.\n- **Request model (`LinkCreate`):** `url` is a strict string, so a non-string fails with error type `string_type`; an invalid URL fails with `value_error`. Both become 422 responses once the routers are wired up. The OpenAPI example uses `https://example.com/a?b=1`.\n- **Timestamps:** `LinkCreatedResponse.created_at` and `LinkDetailResponse.deactivated_at` are always output as UTC with a `Z` suffix. Naive values are treated as UTC and other time zones are converted (e.g. 12:00+02:00 becomes 10:00Z); a null `deactivated_at` stays null.\n- **Other models:** `DailyClicks` (dates output as YYYY-MM-DD), `ReferrerCount` (referrer may be null), `LinkStatsResponse`, `ErrorResponse` (detail can be any value) and `HealthResponse`. Everything is re-exported from `app/schemas/__init__.py`.",
+    "files_changed": [
+      "app/schemas/__init__.py",
+      "app/schemas/links.py",
+      "app/schemas/health.py"
+    ],
+    "notes": [
+      "The temporary doctest suite confirmed that every URL the spec says to reject is rejected, plus a few extra edge cases: a broken IPv6 host (`http://[::1`), a non-numeric port, a URL with a port but no host, `http:example.com`, and non-ASCII characters. A 2048-character URL is accepted and a 2049-character one is rejected; `HTTPS://example.com` comes back unchanged.",
+      "The docstring of `validate_target_url` keeps two doctest examples. They pass with `python -m pytest --doctest-modules app/schemas`.",
+      "I used `dt.UTC` where the spec says `dt.timezone.utc`. It is the same object in Python 3.11, and ruff's UP017 rule flags the longer form."
+    ],
+    "open_issues": []
+  }
+}

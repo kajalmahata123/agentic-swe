@@ -1,0 +1,85 @@
+{
+  "name": "security_review",
+  "version": 2,
+  "hash": "9eeec5b0f8692829",
+  "producer": "security_review-2",
+  "derived_from": {
+    "design": "69d249761c25951f",
+    "verification_report": "a5fa2a88bd461360"
+  },
+  "value": {
+    "summary": "Security review of the merged URL shortener at b7f1cdf. I read the code only and changed nothing. There are no critical or high findings. Most of the core controls hold up:\n- **URL validation** (app/schemas/links.py:24-57) accepts only absolute http/https URLs with a host. It rejects javascript:, data: and file: URLs, plus control characters, whitespace and non-ASCII text. Because CR/LF can never get into a stored URL, the raw 307 Location header cannot be used for header injection.\n- **No SSRF:** the service never fetches the target URLs.\n- **SQL injection:** all queries go through the ORM with bound parameters only.\n- **Log injection:** logs are written as escaped JSON and never include the client IP, headers or query strings.\n- **Error handling:** errors map to generic {detail} bodies, so no stack traces or exception text reach clients.\n- **Short codes** come from `secrets` (base62, 7 characters) and are backed by a unique constraint.\n- **Client IP:** the raw IP never reaches the database. It becomes HMAC-SHA256(IP_HASH_SALT, ip) when a salt is set and NULL otherwise. This satisfies policy finding CMP-001 at redirect.py:48.\n\nOne change goes beyond the approved design (ADR-9 said no auth): the implementer added a router-level API key on /api/links*. It uses a constant-time comparison, requires a key of at least 16 characters, and rejects every request when no key is set. This closes design risk RK-1, but the documentation and API contract still say there is no authentication.\n\nThe remaining issues are defence-in-depth and privacy hardening:\n- no rate limiting or body-size limits, especially on the public redirect, which writes to the database on every request;\n- full referrer URLs (including query strings) and full user-agent strings are stored;\n- click data is never deleted;\n- keeping client IPs out of logs depends on an operator remembering uvicorn's --no-access-log flag;\n- transitive dependencies are unpinned and test tools are mixed into the runtime requirements;\n- /docs and /openapi.json are public;\n- the salt is not held as a secret type in config;\n- the docs are out of date about authentication.\n\nThe policy finding CHG-001 (requirements.txt changed) is consistent with the design pins; I saw no risky packages.",
+    "findings": [
+      {
+        "id": "SEC-1",
+        "severity": "medium",
+        "title": "No rate limiting or abuse resistance; public redirect writes to the DB on every request, so clicks can be flooded",
+        "location": "app/api/redirect.py:43-51; app/services/link_service.py:171-195; app/main.py:51-63 (no limiter or body-size middleware)",
+        "recommendation": "Add per-client rate limiting before the public launch, either at the gateway (documented as required for deployment) or in the app (e.g. a token bucket keyed by the pseudonymised IP). Use separate limits for GET /{code} and POST /api/links. Click recording currently does one INSERT per request, so anyone can inflate stats and cause SQLite 'database is locked' contention. Consider skipping or sampling clicks for repeat (ip_hash, link) pairs within a short window. Also cap request body size (e.g. reject Content-Length over about 8 KB on /api/links) so oversized JSON bodies are refused before they are parsed."
+      },
+      {
+        "id": "SEC-2",
+        "severity": "medium",
+        "title": "Referrer stored in full (query string and fragment), user agent stored raw: weak data minimisation",
+        "location": "app/services/link_service.py:185-186; app/api/redirect.py:46-47; app/models/click_event.py:26-27",
+        "recommendation": "Referrer URLs often carry personal data in the path or query (email addresses, session or reset tokens, search terms). Stats only need the referring origin, so store just scheme://host via urlsplit and drop the path, query and fragment. Reduce the user agent to a coarse family/version (or drop it, since no endpoint exposes it). If full values are required, document the lawful basis and include them in the DPIA."
+      },
+      {
+        "id": "SEC-3",
+        "severity": "medium",
+        "title": "No retention limit for click events (personal data kept forever)",
+        "location": "app/models/click_event.py:14-28; docs/OPERATIONS.md 'Retention' (nothing is ever deleted)",
+        "recommendation": "Add a configurable retention setting (e.g. CLICK_RETENTION_DAYS) and a purge routine or CLI that deletes click_events older than N days. Default N to the 365-day stats window. Alternatively, roll old rows into anonymous daily counters, removing ip_hash, user_agent and referrer, before deletion. This meets GDPR storage limitation, given ip_hash is still pseudonymous personal data."
+      },
+      {
+        "id": "SEC-4",
+        "severity": "medium",
+        "title": "Keeping client IPs out of logs depends on an operator flag (uvicorn access log is on by default)",
+        "location": "app/main.py:1-9, 67 (module-level app; relies on `--no-access-log`); docs/OPERATIONS.md 'Running the service'",
+        "recommendation": "Make the privacy-safe setup the default rather than something to remember. Ship an entrypoint (e.g. app/__main__.py calling uvicorn.run(..., access_log=False)) or a log config that disables or filters 'uvicorn.access', and use it in the container CMD. Behind a proxy, document a strict --forwarded-allow-ips list (never '*'). Otherwise X-Forwarded-For can be spoofed, which skews ip_hash and abuse controls."
+      },
+      {
+        "id": "SEC-5",
+        "severity": "low",
+        "title": "Shared management API key has no scoping, rotation support or audit trail for deactivations",
+        "location": "app/api/deps.py:38-60; app/core/config.py:33; app/services/link_service.py:153-159",
+        "recommendation": "Support several keys (e.g. API_KEYS as a comma-separated list of SecretStr) so keys can be rotated without downtime. Log an audit event for deactivations (e.g. 'link deactivated', link_id plus a key identifier/fingerprint, never the key itself). Longer term, add per-owner authorisation so one client cannot deactivate or read stats for another client's links."
+      },
+      {
+        "id": "SEC-6",
+        "severity": "low",
+        "title": "Docs and API contract out of date: they say there is no authentication, but the code requires X-API-Key and fails closed",
+        "location": "README.md:11-14; docs/API.md:12; docs/OPERATIONS.md:280-285; CHANGELOG.md:60; design api_contract (no 401 listed)",
+        "recommendation": "Update the README, API.md, OPERATIONS.md and CHANGELOG to describe API_KEY (at least 16 characters), the X-API-Key header and the 401 response. Add 401 to the API contract and record the change as an ADR superseding ADR-9. Operators following the current docs will deploy without API_KEY and get 401 on every management call. That is safe, but confusing, and it encourages insecure workarounds."
+      },
+      {
+        "id": "SEC-7",
+        "severity": "low",
+        "title": "IP_HASH_SALT is held as a plain str, not SecretStr, and has no minimum strength",
+        "location": "app/core/config.py:27, 35-41",
+        "recommendation": "Change ip_hash_salt to SecretStr | None so it is masked in repr, logs and debug output, and call get_secret_value() when building LinkService in app/api/deps.py. Require at least 32 random bytes or characters. With a short salt, brute-forcing the IPv4 space would undo the pseudonymisation. Consider failing or warning at startup when the salt is missing in production, so clicks are not silently left without any IP-derived value."
+      },
+      {
+        "id": "SEC-8",
+        "severity": "low",
+        "title": "Interactive docs and OpenAPI schema are publicly exposed",
+        "location": "app/main.py:51",
+        "recommendation": "Add a setting (e.g. ENABLE_DOCS, default false in production) and pass docs_url/redoc_url/openapi_url=None when it is disabled. Or restrict these paths at the gateway. This reduces how much of the management API surface is visible to the public."
+      },
+      {
+        "id": "SEC-9",
+        "severity": "low",
+        "title": "Dependency hygiene: transitive packages (starlette, etc.) unpinned; test tools in runtime requirements",
+        "location": "requirements.txt:1-8",
+        "recommendation": "Split runtime and dev requirements (move pytest, pytest-cov and httpx to requirements-dev.txt). Generate a fully pinned lock file with hashes (pip-compile --generate-hashes) that includes starlette and anyio. Add pip-audit or Dependabot to CI. No known exploitable CVE affects the code paths used here (no multipart forms, no FileResponse), but the transitive starlette version currently floats with fastapi's range."
+      },
+      {
+        "id": "SEC-10",
+        "severity": "low",
+        "title": "BASE_URL is not validated; an http:// or malformed origin produces insecure or broken short_url values",
+        "location": "app/core/config.py:24; app/api/deps.py:82-84",
+        "recommendation": "Validate base_url at startup with the same http/https URL rules (no path, query or fragment). Warn or refuse when the scheme is http and the host is not localhost, so production short links are always issued over https."
+      }
+    ]
+  }
+}

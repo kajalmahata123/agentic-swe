@@ -1,0 +1,31 @@
+{
+  "name": "requirement",
+  "version": 3,
+  "hash": "723ea6b6ec105069",
+  "producer": "intake",
+  "derived_from": {},
+  "value": {
+    "text": "Marketing is launching a big campaign next week and will put our short links on billboards and\nin a TV ad. Make the link service faster and more trustworthy before then.",
+    "scenario": "ambiguous",
+    "amendments": [
+      {
+        "id": "amd_5305a8421c78",
+        "text": "Update from marketing: campaign links must stop working automatically when the campaign ends (31 December, 23:59 UTC), and we need to see how many clicks each link got per hour during the TV ad slots.",
+        "author": "product-owner"
+      }
+    ],
+    "clarifications": {
+      "Q-1": {
+        "question": "What are the measurable campaign targets: expected peak redirect requests per second or concurrent visitors, the redirect latency target (p95/p99), and the availability goal during the campaign window?",
+        "answer": "Modest: up to about 50 RPS, p95 < 100 ms, best effort (one instance is enough)",
+        "by": "human:kajalmahata"
+      },
+      "Q-2": {
+        "question": "Which database and topology will serve the campaign in production: SQLite on one instance, or PostgreSQL/MySQL with several workers or replicas? If PostgreSQL, should we pin a driver (e.g. psycopg) in requirements.txt?",
+        "answer": "Keep the current SQLite backend and harden it (WAL, busy_timeout, configurable pool). Add no new driver. Document the move to PostgreSQL for multi-worker or campaign scale.",
+        "by": "human:kajalmahata"
+      }
+    },
+    "clarification_rounds": 1
+  }
+}

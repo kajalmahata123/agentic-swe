@@ -1,0 +1,623 @@
+{
+  "name": "requirements_spec",
+  "version": 3,
+  "hash": "177a1306cb37a92f",
+  "producer": "requirements",
+  "derived_from": {
+    "requirement": "723ea6b6ec105069",
+    "codebase_impact": "6abb8ecec1373cf8"
+  },
+  "value": {
+    "title": "Campaign readiness: hardened single-instance SQLite redirects (50 RPS / p95 < 100 ms), automatic link expiry at campaign end, hourly click analytics, trustworthy probes, and accurate docs",
+    "problem_statement": "Next week marketing starts a billboard and TV campaign that will show our short links to the public. The product owner has set the targets (Q-1): peak load is modest, up to about 50 redirect requests per second. Redirect p95 latency must be under 100 ms. Availability is best effort on one instance. Production stays on SQLite, hardened with WAL, a busy_timeout and a configurable pool (Q-2). No new database driver is added. The move to PostgreSQL for multi-worker or larger scale is documented but not implemented.\n\nAmendment amd_5305a8421c78 adds two product needs:\n(a) Campaign links must stop working on their own when the campaign ends (31 December, 23:59 UTC), with no one deactivating links by hand.\n(b) Marketing must be able to see how many clicks each link got in each hour during the TV ad slots.\n\nThe current service has these defects or gaps for campaign traffic:\n(1) SQLite has no hardening: no WAL, the default busy timeout and no pool configuration. Redirect lookups block behind click and create commits, and the runbook describes this behaviour wrongly.\n(2) Pool sizing cannot be configured.\n(3) HEAD /healthz and HEAD /readyz fall through to the catch-all HEAD /{code} route and return 404, so HEAD-based uptime monitors would report an outage.\n(4) Stats load one row per click, so memory and time grow without limit.\n(5) Links cannot expire. Redirect resolution checks only is_active.\n(6) Analytics are bucketed only by UTC day, so clicks during an ad slot cannot be measured.\n(7) There is no migration tooling. create_all never alters existing tables, so adding a column without an upgrade step would make every redirect against the production database return 503.\n(8) On MySQL, codes match case-insensitively. This is low priority because production is SQLite.\n(9) The docs contradict the code on authentication.\n\nThis change does the following:\n- Makes the redirect path fast and resistant to contention on one SQLite instance.\n- Makes DB tuning configurable.\n- Adds a per-link expires_at that is enforced on GET and HEAD, can be set at creation or on existing links, and is applied to deployed databases by an idempotent startup schema upgrade.\n- Adds a bounded, API-key-protected hourly click endpoint.\n- Makes the probes and analytics trustworthy.\n- Corrects the docs and adds a campaign runbook.\n\nEvery existing contract must stay intact: a 307 with the exact Location header and no-store; an immediate 410 after deactivation; synchronous click counting; privacy; the unchanged daily stats contract; idempotency replays of keys stored before the deploy; and the architecture rules. The deadline is one week, so the scope favours small, low-risk changes. That means no caching, no asynchronous ingestion, no new drivers, and only one additive, nullable schema change. New ids continue from FR-1..FR-21 and NFR-1..NFR-20.",
+    "functional": [
+      {
+        "id": "FR-14",
+        "title": "HEAD support on liveness and readiness probes",
+        "description": "/healthz and /readyz must answer HEAD requests themselves instead of falling through to the catch-all HEAD /{code} redirect route. Today HEAD /healthz and HEAD /readyz return 404 'Link not found', because health.py registers GET only. External uptime monitors for the campaign commonly probe with HEAD.",
+        "acceptance_criteria": [
+          "HEAD /healthz returns 200 with an empty body and does not touch the database. Test: the app uses a session factory that raises on use, and the request still returns 200.",
+          "HEAD /readyz returns 200 with an empty body when SELECT 1 succeeds.",
+          "HEAD /readyz returns 503 when the readiness DB check fails. The 503 comes from the readiness check, not from a link lookup, and the response has no exception text, SQL or stack trace.",
+          "No links-table lookup runs for HEAD /healthz or HEAD /readyz. Verify by counting SQL statements or by spying on LinkRepository.",
+          "GET /healthz and GET /readyz keep their current status codes and JSON bodies.",
+          "POST /healthz and POST /readyz still return 405.",
+          "HEAD /{code} for any other code behaves as before: 307 with the exact Location and Cache-Control: no-store for active, unexpired links; 404 JSON for unknown or malformed codes; 410 JSON with no Location for deactivated or expired links. No click is recorded.",
+          "The redirect router is still included last. The OpenAPI path set changes only by the additions in FR-24 and FR-25, and HEAD /{code} stays out of the schema."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-15",
+        "title": "Redirects resilient to database write contention (hardened SQLite)",
+        "description": "A held write lock or a failed click write must not stall or fail the public redirect for longer than a bounded, configurable time. For file-based SQLite, every new connection enables WAL journal mode, synchronous=NORMAL and a configurable busy timeout. The busy timeout is set through the sqlite3 connect_args 'timeout' parameter, and only literal PRAGMA strings are used. Readers then do not block behind click or create commits. Click recording stays synchronous and best-effort: if the click INSERT or COMMIT fails or times out, it is rolled back, a log line without the IP is written, and the visitor still gets the 307. The read transaction should end before the click insert, to avoid SQLITE_BUSY_SNAPSHOT on the lock upgrade.",
+        "acceptance_criteria": [
+          "New setting SQLITE_BUSY_TIMEOUT_MS: an integer from 0 to 60000, default 5000 (the current pysqlite behaviour). A value outside that range fails settings validation at startup with a clear error.",
+          "For a file-based SQLite DATABASE_URL, any connection from the engine reports PRAGMA journal_mode = 'wal', PRAGMA synchronous = 1 (NORMAL), and PRAGMA busy_timeout equal to SQLITE_BUSY_TIMEOUT_MS.",
+          "No PRAGMA or other SQL string is built with formatting. The existing literal-only text() static test passes.",
+          "For in-memory SQLite URLs ('sqlite://' and ':memory:'), the app starts and serves requests without error. WAL is not applied there, or its failure is tolerated.",
+          "Non-SQLite engines get no SQLite pragmas and keep pool_pre_ping=True. SQLite keeps check_same_thread=False.",
+          "Lock test setup: a temp file database, SQLITE_BUSY_TIMEOUT_MS=200, and a second connection holding a write lock (BEGIN IMMEDIATE with an uncommitted insert). Under these conditions, GET /{code} for an active, unexpired link returns 307 with the exact Location within 700 ms. No click is persisted for that request, and exactly one warning log line without the IP is written.",
+          "With the same write lock held, HEAD /{code} returns 307, GET /{code} for a deactivated link returns 410, and GET /{code} for an expired link returns 410. With WAL, the lookup is not blocked.",
+          "With no lock held, exactly one click_event is persisted for each successful GET, and total_clicks and the hourly stats show it immediately after the response.",
+          "If the link lookup itself cannot run because the database is unavailable, the redirect returns 503 JSON {\"detail\": ...} with no internal details. docs/OPERATIONS.md describes this accurately."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-16",
+        "title": "Configurable database connection pool",
+        "description": "Pool sizing must be configurable through validated settings. The defaults reproduce today's SQLAlchemy behaviour.",
+        "acceptance_criteria": [
+          "New settings: DB_POOL_SIZE (integer \u22651, default 5), DB_MAX_OVERFLOW (integer \u22650, default 10) and DB_POOL_TIMEOUT_SECONDS (number >0 and \u2264300, default 30).",
+          "An invalid value (for example DB_POOL_SIZE=0, DB_MAX_OVERFLOW=-1 or DB_POOL_TIMEOUT_SECONDS=0) fails settings validation with a clear error, and the app does not start.",
+          "For file-based SQLite and for non-SQLite URLs (QueuePool), engine.pool.size() equals DB_POOL_SIZE, and the pool's overflow and timeout match the settings.",
+          "In-memory SQLite URLs ignore the pool settings without error. test_main_exposes_create_app_and_module_app still passes with 'sqlite://'.",
+          "Existing settings defaults are unchanged. test_settings_defaults_and_env is extended, not weakened. Every new env var is added to the conftest env-stripping list.",
+          "The engine and pool are still created per app inside create_app and stored on app.state. There is no module-level engine, settings object or pool."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-17",
+        "title": "Lean redirect query budget",
+        "description": "The redirect hot path does the minimum database work. It looks up the link by code, selecting only the columns it needs (id, url, is_active, expires_at), and inserts a click for GET only. This supports the p95 < 100 ms target.",
+        "acceptance_criteria": [
+          "A successful GET /{code} issues exactly one SELECT on links, one INSERT into click_events and one COMMIT, apart from any transaction-boundary statements the driver issues. Verify with a before_cursor_execute counter.",
+          "HEAD /{code} issues exactly one SELECT and no INSERT.",
+          "A malformed code (one that fails ^[A-Za-z0-9]{1,32}$) issues no SQL and returns 404 JSON.",
+          "A lookup of an unknown, deactivated or expired code issues one SELECT and no INSERT.",
+          "The expiry check adds no extra query. It is evaluated in Python on the row that was already loaded.",
+          "The Location header stays byte-identical to the stored URL (no re-quoting)."
+        ],
+        "priority": "should"
+      },
+      {
+        "id": "FR-18",
+        "title": "Bounded-memory daily stats aggregation",
+        "description": "GET /api/links/{code}/stats must not load one Python object per click. Daily buckets are aggregated in SQL, or streamed with constant memory, so memory is proportional to the number of days rather than the number of clicks. The response semantics and schema are unchanged.",
+        "acceptance_criteria": [
+          "The repository no longer returns a list of per-click timestamps for daily stats. At any one time, the stats path holds at most one row per day plus one row per referrer group, or it streams with yield_per. A unit test on the repository's return shape verifies this.",
+          "The semantics are unchanged:\n- UTC-day bucketing, including across midnight.\n- The days=1..365 window includes today.\n- Empty days are omitted, and days are listed in ascending order.\n- total_clicks is all-time.\n- Referrers are ordered by count descending, then referrer ascending, with NULL last on ties, capped at 10.\n- Missing or empty referrers are grouped as NULL.\n- days outside 1..365 returns 422.",
+          "LinkStatsResponse is not changed. test_stats_shape_and_empty_link and all other existing tests in tests/test_stats.py pass unmodified.",
+          "Stats keep working for deactivated and expired links.",
+          "Any dialect-specific date expression is guarded per dialect (SQLite, PostgreSQL, MySQL). A test compiles the SQL for all three dialects without connecting to a database.",
+          "With 200,000 clicks seeded on one link in a temp SQLite file, GET /stats?days=365 returns 200 in under 2 s, and the tracemalloc peak is at most 2\u00d7 the peak with 2,000 clicks. This test is marked slow."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-19",
+        "title": "Case-sensitive short-code matching on MySQL",
+        "description": "On MySQL, links.code must use a binary collation for fresh databases, and the docs must give the manual DDL for existing deployments. Production stays on SQLite (Q-2), so this is a portability fix.",
+        "acceptance_criteria": [
+          "CreateTable(Link.__table__) compiled with the MySQL dialect declares links.code with a case-sensitive or binary collation (for example utf8mb4_bin).",
+          "The compiled DDL for SQLite and PostgreSQL is unchanged apart from the FR-26 expires_at column.",
+          "docs/OPERATIONS.md contains the exact ALTER TABLE statement for existing MySQL databases.",
+          "On SQLite, /AbC1234 and /abc1234 still resolve independently."
+        ],
+        "priority": "could"
+      },
+      {
+        "id": "FR-20",
+        "title": "Accurate documentation, campaign runbook and changelog",
+        "description": "README.md, docs/API.md, docs/OPERATIONS.md and CHANGELOG.md must match the code. They cover:\n- API-key authentication\n- all settings\n- HEAD probes\n- SQLite WAL and backups\n- lock behaviour\n- link expiry\n- the hourly stats endpoint\n- the startup schema upgrade\n- the campaign deployment profile and runbook\n- the PostgreSQL scaling path",
+        "acceptance_criteria": [
+          "No doc says there is no authentication. README, API.md and OPERATIONS.md all describe the X-API-Key header on /api/links*, the 401 response, fail-closed behaviour when API_KEY is unset, and the 16-character minimum.",
+          "The README configuration table lists every Settings env var, including API_KEY, SQLITE_BUSY_TIMEOUT_MS, DB_POOL_SIZE, DB_MAX_OVERFLOW and DB_POOL_TIMEOUT_SECONDS. A test iterates over the Settings fields and checks that each env name appears in README.md.",
+          "docs/API.md documents:\n- HEAD on /healthz and /readyz\n- expires_at in the POST /api/links request and response and in GET /api/links/{code}\n- PATCH /api/links/{code} (FR-24)\n- GET /api/links/{code}/stats/hourly with its parameters, range limit, zero-filled response and example (FR-25)\n- the 410 'Link has expired' redirect response\n- 401 and 422 in the error table",
+          "docs/OPERATIONS.md documents:\n- WAL and its -wal/-shm files\n- backups (sqlite3 .backup, or copying all three files while the service is stopped)\n- that WAL needs a local, writable directory and no network filesystem\n- the corrected locking runbook\n- pool sizing\n- the automatic startup schema upgrade that adds links.expires_at, with the advice to back up before deploying and the equivalent manual SQL",
+          "docs/OPERATIONS.md has a 'Campaign deployment' section. It covers:\n- the targets: ~50 RPS, redirect p95 < 100 ms, best effort, one instance\n- the topology: one instance, one uvicorn worker, SQLite with WAL on local disk\n- recommended SQLITE_BUSY_TIMEOUT_MS and pool values\n- how to set expires_at to the confirmed campaign end on new links (POST) and on existing campaign links (PATCH), and how to verify it with GET /api/links/{code}\n- how to pull hourly clicks for each TV ad slot, with UTC conversion guidance for local broadcast times\n- a pre-launch checklist: startup tuning and schema log lines, HEAD /readyz monitor, backup taken, expiry verified on every campaign link\n- restart and recovery steps",
+          "docs/OPERATIONS.md has a 'Scaling beyond the campaign profile' section. It states that multiple workers, multiple replicas or more than ~50 RPS require PostgreSQL. It gives the migration steps (add and pin a driver, set DATABASE_URL, create the schema on a fresh database, copy the data, size the pool per worker) and states that no driver ships in this release.",
+          "CHANGELOG.md [Unreleased] records:\n- API-key authentication\n- HEAD probes\n- WAL, busy_timeout and pool settings\n- the stats aggregation change\n- links.expires_at with the automatic schema upgrade\n- the expiry 410\n- PATCH expiry\n- the hourly stats endpoint\n- the MySQL collation note"
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-21",
+        "title": "Regression protection of existing contracts",
+        "description": "All existing behaviour covered by FR-1..FR-13 and NFR-1..NFR-9 is preserved, especially on the paths this change touches.",
+        "acceptance_criteria": [
+          "All 165 existing tests pass. Existing assertions are not loosened. A test that compares a whole create or detail body may only be extended to include the new expires_at (and is_expired) fields.",
+          "Redirect contract (FR-5): 307 with a Location byte-identical to the stored URL and Cache-Control: no-store; 404 JSON for unknown or malformed codes; 410 JSON with no Location and the existing detail text for deactivated links.",
+          "Links with expires_at NULL (all links that exist before the deploy) behave exactly as before.",
+          "Immediate deactivation (FR-7): the first GET or HEAD after DELETE returns 410.",
+          "Click recording (FR-8): exactly one click per successful GET; none for HEAD, 404 or 410; referrer truncated to 2048 characters and UA to 512; counts visible immediately.",
+          "Auth: /api/links*, including the new PATCH and hourly routes, requires X-API-Key. Redirects and probes stay public.",
+          "Idempotency (FR-3, FR-4): replays, 409 on a different payload, races, collision retry and 503 on exhaustion all still pass on a WAL file database. Idempotency keys stored before the deploy (url-only hash) still replay successfully when the same url is sent without expires_at.",
+          "Error contract (FR-11, NFR-3): JSON {detail} everywhere; SQLAlchemyError becomes 503; unknown errors become a generic 500; nothing internal is leaked."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-22",
+        "title": "Automatic link expiry enforced on redirect",
+        "description": "A link with a non-null expires_at stops redirecting automatically from that instant, with no operator action. The rule is: a link is expired when now (UTC) >= expires_at. GET /{code} and HEAD /{code} share one private service helper that checks the active state and then expiry. Deactivation takes precedence: a deactivated link keeps its existing 410 detail. An expired link returns 410 with the distinct detail 'Link has expired' and records no click. LinkService gets an injectable clock (a `now` callable defaulting to utcnow) so the rule can be tested deterministically.",
+        "acceptance_criteria": [
+          "Using an injected clock with expires_at = 2025-12-31T23:59:00Z:\n- At 23:58:59.999999, GET /{code} returns 307 and records one click; HEAD returns 307.\n- At exactly 23:59:00, GET and HEAD return 410 JSON {\"detail\": \"Link has expired\"}, with no Location header and Cache-Control: no-store (or no caching headers).\n- At 23:59:00 and later, no click_event row is created.",
+          "One second after expires_at, both GET and HEAD still return 410. Expiry is checked on every request and never cached.",
+          "A link that is deactivated and also past expires_at returns 410 with the existing deactivated detail.",
+          "A link with expires_at NULL never expires.",
+          "Expired links still return 200 from GET /api/links/{code}, /stats and /stats/hourly, with their historical clicks.",
+          "The redirect router's OpenAPI responses metadata documents 410 for expired links.",
+          "Both resolve methods use the same helper, so a test that patches the helper's clock affects GET and HEAD alike.",
+          "The expiry check adds no extra SQL statement (see FR-17)."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-23",
+        "title": "Set expiry on link creation and expose it in responses",
+        "description": "POST /api/links accepts an optional expires_at (an ISO 8601 datetime). Values with an offset are converted to UTC, and naive values are treated as UTC. Values are stored as naive UTC. The value must be in the future relative to the server clock. Create and detail responses return expires_at serialised as UTC with a 'Z' (null when unset). The detail response also returns is_expired. The idempotency request hash covers expires_at only when it is provided, so existing keys stay valid.",
+        "acceptance_criteria": [
+          "POST {url, expires_at: '2025-12-31T23:59:00Z'} returns 201, and the body contains expires_at '2025-12-31T23:59:00Z'. GET /api/links/{code} returns the same value and is_expired=false.",
+          "POST without expires_at returns expires_at null. Detail returns expires_at null and is_expired=false.",
+          "'2026-01-01T00:59:00+01:00' is stored and returned as '2025-12-31T23:59:00Z'. A naive '2025-12-31T23:59:00' is treated as UTC.",
+          "expires_at at or before the current server time returns 422 {\"detail\": ...}, and no link is created. A value that is not a datetime returns 422.",
+          "Idempotency:\n- Same key, same url and the same instant (even with a different offset notation) replays the stored link (201/200 per the existing replay contract).\n- Same key and url but a different or added expires_at returns 409.\n- A key created before the deploy with a url-only hash still replays when expires_at is omitted.\n- request_hash stays a 64-character hex string.",
+          "On replay after the stored expiry instant has passed, the stored link is returned unchanged. Replay does not re-check that expires_at is in the future, which is consistent with replaying deactivated links.",
+          "The OpenAPI schemas for LinkCreate, LinkCreatedResponse and LinkDetailResponse include expires_at. LinkDetailResponse also includes is_expired."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-24",
+        "title": "Set, change or clear expiry on existing links",
+        "description": "Campaign links may already exist, for example links already printed on billboards. PATCH /api/links/{code} (API key required) with body {\"expires_at\": <datetime|null>} sets or clears the expiry of an existing link. Operators use it to apply the campaign end to every campaign link. The same validation and UTC normalisation as FR-23 apply.",
+        "acceptance_criteria": [
+          "PATCH with expires_at in the future returns 200 with the updated LinkDetailResponse. Later redirects follow FR-22 for the new value.",
+          "PATCH with expires_at null returns 200 and removes the expiry. An expired, still-active link then redirects with 307 again (supports extending the campaign or recovering from operator error).",
+          "PATCH with expires_at at or before now, a non-datetime value, a missing expires_at field or unknown extra fields returns 422. The stored value is unchanged.",
+          "A missing or wrong X-API-Key returns 401. An unknown or malformed code returns 404 JSON.",
+          "PATCH on a deactivated link updates expires_at and returns 200, but the link stays 410 (deactivated). PATCH never reactivates a deactivated link.",
+          "PATCH does not change url, code, is_active, created_at or deactivated_at, and does not touch idempotency records.",
+          "The OpenAPI schema lists PATCH /api/links/{code} with its request schema and the 401, 404 and 422 responses."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-25",
+        "title": "Hourly click counts per link",
+        "description": "New endpoint GET /api/links/{code}/stats/hourly?start=<datetime>&end=<datetime> (API key required). It returns clicks for one link bucketed by UTC hour over the half-open range [start, end). start is floored to the top of its UTC hour and end is rounded up to the next top of hour. Offsets are converted to UTC, and naive values are treated as UTC. If both are omitted, the range is the last 24 complete hours plus the current hour. The response is zero-filled: every hour in the range appears in ascending order. Aggregation is done in SQL or streamed, so memory is O(hours), not O(clicks). It works for active, deactivated and expired links. The daily /stats endpoint is unchanged.",
+        "acceptance_criteria": [
+          "The response is 200 with body {code, start, end, total_clicks, clicks_per_hour: [{hour, count}]}:\n- start and end are the effective, hour-aligned UTC bounds with 'Z'.\n- hour is the top of each UTC hour with 'Z'.\n- total_clicks is the sum over the range.",
+          "Clicks at 20:00:00, 20:59:59 and 21:00:00 UTC with start=20:00Z and end=22:00Z give [{20:00Z, 2}, {21:00Z, 1}] and total_clicks 3.",
+          "Hours with no clicks appear with count 0. The number of entries equals the number of hours in the range.",
+          "Bucketing is correct across a UTC day boundary (23:xx and 00:xx land in separate buckets on the correct dates).",
+          "start=20:15+01:00 is treated as 19:15Z, and 19:00Z is the first bucket.",
+          "Only clicks of the requested link are counted. Clicks of other links in the same hours are excluded.",
+          "The default range (both parameters omitted), under an injected now, covers exactly 25 hourly buckets ending with the current hour.",
+          "Supplying only one of start or end, start >= end after alignment, a range longer than 744 hours (31 days), or an unparseable datetime returns 422 {\"detail\": ...}.",
+          "An unknown or malformed code returns 404. A missing or wrong API key returns 401.",
+          "Hourly counts for a deactivated or expired link return 200 with its historical clicks.",
+          "Dialect-specific hour-truncation expressions, if used, compile for SQLite, PostgreSQL and MySQL in a test without needing a connection. Python bucketing over a streamed result is an acceptable alternative.",
+          "The OpenAPI schema includes the path and the HourlyClicks and LinkHourlyStatsResponse schemas. LinkStatsResponse is not changed."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-26",
+        "title": "Idempotent startup schema upgrade for links.expires_at",
+        "description": "The Link model gains a nullable expires_at column (portable DateTime, naive UTC, NULL means never expires). create_all does not alter existing tables, so the app lifespan runs an idempotent upgrade after create_all. The upgrade inspects the links columns and, only if expires_at is missing, runs the literal statement 'ALTER TABLE links ADD COLUMN expires_at DATETIME' (or the dialect-portable equivalent). Without this, every redirect against the deployed shortener.db would fail with 503.",
+        "acceptance_criteria": [
+          "Starting the app against a SQLite file created with the previous schema (no expires_at, and with existing links, clicks and idempotency keys) adds the column. Afterwards existing links redirect with 307, clicks are recorded, the stats and detail endpoints return 200 (expires_at null), and old idempotency keys replay.",
+          "A second startup on the upgraded database is a no-op: no ALTER is issued, and the startup succeeds.",
+          "A fresh database gets expires_at from create_all, and the upgrade issues no ALTER.",
+          "The upgrade logs one structured line saying whether the column was added or was already present.",
+          "If the upgrade fails, startup fails with a logged error. The app does not start serving 503 on every redirect.",
+          "The SQL is a literal string (it passes the literal-only static test) and uses only portable sqltypes in the model (it passes test_orm_uses_declarative_base_and_portable_types).",
+          "The upgrade code lives in app/core (or a helper invoked from app/main.py lifespan) and respects the layering rules."
+        ],
+        "priority": "must"
+      }
+    ],
+    "non_functional": [
+      {
+        "id": "NFR-10",
+        "category": "performance",
+        "requirement": "Campaign target (Q-1): at a sustained ~50 requests per second of mixed traffic on one app instance with a temp file SQLite database (WAL, default settings), redirect p95 < 100 ms with zero 5xx. The mix is 95% GET /{code} over 1,000 seeded links, some of them with a future expires_at, and 5% POST /api/links. The click count equals the successful GETs minus any logged best-effort failures (expected 0).",
+        "measure": "tests/test_perf_concurrency.py, marked slow. It runs an open-loop paced generator at 50 RPS for 20 s using a ThreadPoolExecutor (\u226416 workers) and TestClient, and asserts the status distribution, the client-side p95 and the click count."
+      },
+      {
+        "id": "NFR-11",
+        "category": "performance",
+        "requirement": "The existing single-threaded budget (NFR-4) must not regress after the expiry check and the WAL configuration are added: redirect p95 < 50 ms and create p95 < 100 ms on 10k seeded links.",
+        "measure": "The existing test_performance_p95_redirect_and_create passes with its thresholds unchanged."
+      },
+      {
+        "id": "NFR-12",
+        "category": "reliability",
+        "requirement": "A failure or lock timeout during click recording never turns a resolvable redirect into a non-307 response. While a lock is held, the worst-case added latency is SQLITE_BUSY_TIMEOUT_MS + 500 ms.",
+        "measure": "The FR-15 lock tests, plus a fault-injection test that makes the click INSERT or COMMIT raise OperationalError and asserts a 307, a rollback, and a log line without the IP."
+      },
+      {
+        "id": "NFR-13",
+        "category": "scalability",
+        "requirement": "Daily stats memory is O(days + referrer groups), and hourly stats memory is O(hours in range), never O(clicks).",
+        "measure": "The FR-18 tracemalloc comparison (200k vs 2k clicks, peak at most 2\u00d7), the repository return-shape tests, and the NFR-21 hourly memory test."
+      },
+      {
+        "id": "NFR-14",
+        "category": "privacy",
+        "requirement": "NFR-1 is preserved. No raw IP is stored or logged anywhere, including the click-failure warnings, the startup tuning and schema-upgrade logs, and the expiry and hourly paths. ip_hash stays HMAC-SHA256 and is set only when IP_HASH_SALT is configured. The hourly endpoint returns only aggregate counts, with no per-click data.",
+        "measure": "The existing privacy tests, plus caplog tests on the click-failure, lock, expired-redirect and hourly paths asserting that the client IP and the X-Forwarded-For values are absent, plus a response-shape test for the hourly endpoint."
+      },
+      {
+        "id": "NFR-15",
+        "category": "security",
+        "requirement": "No security regressions:\n- /healthz never touches the DB.\n- Errors leak no exception text.\n- Cache-Control: no-store stays on redirects, including 410 responses for expired links, so expiry takes effect at once for repeat visitors.\n- The API-key check stays constant-time and fails closed, and covers the new PATCH and hourly routes.\n- No secrets appear in logs.",
+        "measure": "The existing auth, health and error tests; new auth tests for PATCH and hourly; static checks for eval/exec/subprocess and for text() used only with literals; and a caplog test that the startup log contains neither the DATABASE_URL password nor API_KEY."
+      },
+      {
+        "id": "NFR-16",
+        "category": "operability",
+        "requirement": "At startup the app logs one structured line with the effective DB tuning: dialect, pool size, overflow and timeout, and for SQLite the journal_mode, synchronous and busy_timeout. It logs one line with the schema-upgrade outcome. Neither line contains credentials.",
+        "measure": "A caplog test on create_app with a TestClient lifespan asserts that the fields are present and the secrets absent."
+      },
+      {
+        "id": "NFR-17",
+        "category": "maintainability",
+        "requirement": "The architecture and static rules hold:\n- Layering points inward.\n- Services import no FastAPI or Starlette.\n- Core imports nothing from api, services or repositories.\n- Schemas import nothing from app.\n- There are no lru_cache/cache names.\n- New settings are validated in app/core/config.py.\n- requirements.txt stays pinned with == and gains no new runtime dependency (Q-2).\n\nCoverage stays at or above 99%, and every new test docstring names the FR/NFR ids it covers.",
+        "measure": "The existing AST and static architecture tests pass, pytest --cov reports at least 99%, and a test or review confirms requirements.txt has no new entries."
+      },
+      {
+        "id": "NFR-18",
+        "category": "reliability",
+        "requirement": "The only change to existing tables is the additive, nullable links.expires_at column, applied automatically and idempotently at startup (FR-26). The MySQL-only collation declaration (FR-19) affects only fresh MySQL databases. The deployed SQLite database keeps working with no manual step, and existing rows and behaviour are unchanged.",
+        "measure": "A test compiles CreateTable for SQLite and PostgreSQL and compares it with a baseline snapshot, with only the expires_at column added. A second test starts the app against a SQLite file created by the previous version (old schema, rollback-journal mode) and confirms the switch to WAL, the column being added, and working redirects, stats and idempotency replays."
+      },
+      {
+        "id": "NFR-19",
+        "category": "performance",
+        "requirement": "Burst headroom for TV-ad spikes: 16 unpaced concurrent client threads send 2,000 requests in the 95/5 mix against a WAL temp file database. There must be zero 5xx and redirect p95 < 250 ms in CI. Clicks may be dropped only through logged best-effort failures.",
+        "measure": "A second case in tests/test_perf_concurrency.py, marked slow, asserting no 5xx, the p95 bound, and that clicks plus logged failures equal the successful GETs."
+      },
+      {
+        "id": "NFR-20",
+        "category": "operability",
+        "requirement": "Before launch, operators can verify the campaign set-up on the real deployment without new tooling. The checklist covers: the startup tuning and schema-upgrade log lines; HEAD /healthz and HEAD /readyz returning 200; a recent backup; expires_at set to the confirmed campaign end on every campaign link (checked with GET /api/links/{code}); an hourly stats query returning data for a test link; and a ~50 RPS smoke load showing p95 < 100 ms.",
+        "measure": "Reviewers confirm the checklist in the 'Campaign deployment' section of docs/OPERATIONS.md. A doc test checks that the section exists and mentions the HEAD probes, the targets, expires_at and the hourly endpoint."
+      },
+      {
+        "id": "NFR-21",
+        "category": "performance",
+        "requirement": "The hourly stats endpoint is fast and bounded for campaign-scale links. With 200,000 clicks on one link, all within a 744-hour range, the request returns 200 in under 2 s, and memory does not grow with the click count.",
+        "measure": "A slow test in tests/test_hourly_stats.py seeds 200k and 2k clicks and asserts the latency bound and a tracemalloc peak at most 2\u00d7 the 2k case. The query uses the existing (link_id, created_at) index with a half-open range, checked with EXPLAIN QUERY PLAN on SQLite."
+      },
+      {
+        "id": "NFR-22",
+        "category": "reliability",
+        "requirement": "Time handling is exact and timezone-safe. Expiry and hourly bucketing use naive UTC throughout. Aware inputs with any offset are converted, and naive inputs are treated as UTC. No comparison between naive and aware values can raise (no 500). Expiry takes effect at the exact stored instant, to the precision of the stored value, on every request.",
+        "measure": "Tests with offsets +01:00, -05:00 and +05:30 on create, PATCH and the hourly parameters, plus boundary tests using an injected clock (1 \u00b5s before the instant, exactly at it, and after it). None of them returns a 500."
+      }
+    ],
+    "ambiguities": [
+      {
+        "id": "Q-1",
+        "question": "What are the measurable campaign targets: expected peak redirect requests per second or concurrent visitors, the redirect latency target (p95/p99), and the availability goal during the campaign window?",
+        "why": "The target determines the architecture: modest load can be met with WAL and the pool settings, medium load needs PostgreSQL, and large load needs caching and asynchronous ingestion.",
+        "options": [
+          "Modest: up to about 50 RPS, p95 < 100 ms, best effort (one instance is enough)",
+          "Medium: about 500 RPS, p95 < 100 ms, 99.9% availability",
+          "Large: several thousand RPS or TV-spike bursts"
+        ],
+        "default": "Modest: ~50 RPS, p95 < 100 ms, best effort on one instance (NFR-10, NFR-19, NFR-20).",
+        "blocking": false,
+        "resolved_by": "Modest: up to about 50 RPS, p95 < 100 ms, best effort (one instance is enough)"
+      },
+      {
+        "id": "Q-2",
+        "question": "Which database and topology will serve the campaign in production: SQLite on one instance, or PostgreSQL/MySQL with several workers or replicas? If PostgreSQL, should we pin a driver (e.g. psycopg) in requirements.txt?",
+        "why": "SQLite stays single-writer even with WAL. PostgreSQL would need a pinned driver.",
+        "options": [
+          "SQLite, one instance, one worker",
+          "SQLite with several workers",
+          "PostgreSQL with a pinned driver",
+          "MySQL with a pinned driver"
+        ],
+        "default": "SQLite on one instance with one worker, hardened. No driver is added, and the PostgreSQL path is documented.",
+        "blocking": false,
+        "resolved_by": "Keep the current SQLite backend and harden it (WAL, busy_timeout, configurable pool). Add no new driver. Document the move to PostgreSQL for multi-worker or campaign scale."
+      },
+      {
+        "id": "Q-3",
+        "question": "What does 'more trustworthy' mean to marketing beyond the amendment (expiry and hourly analytics): link safety scanning, vanity or confusable-free codes, or HTML error pages?",
+        "why": "Each extra option is a separate feature that competes for the one-week window.",
+        "options": [
+          "Reliability, monitoring, accurate analytics, expiry and correct docs (this spec)",
+          "Plus link-safety scanning",
+          "Plus human-friendly codes or vanity aliases",
+          "Plus HTML 404/410 pages"
+        ],
+        "default": "Trustworthy means reliable redirects under load, truthful probes, links that stop at campaign end, accurate bounded analytics, and correct docs. The other options are out of scope.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-4",
+        "question": "May we cache redirect lookups in process to gain speed?",
+        "why": "A cache conflicts with immediate deactivation (FR-7) and exact-instant expiry (FR-22), and would under-count hourly clicks.",
+        "options": [
+          "No cache",
+          "Per-app TTL cache",
+          "Shared cache (Redis)"
+        ],
+        "default": "No redirect cache. The target is met through WAL, the narrow lookup and pool sizing.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-5",
+        "question": "Should click recording move off the request path (background task, batching, queue)?",
+        "why": "Asynchronous ingestion changes the visibility of click counts (including the hourly counts for TV slots) and risks losing clicks.",
+        "options": [
+          "Keep synchronous, best-effort",
+          "Asynchronous or batched"
+        ],
+        "default": "Keep it synchronous and best-effort, with lock waits bounded by SQLITE_BUSY_TIMEOUT_MS.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-6",
+        "question": "Should clicks from link-preview bots and crawlers be excluded from or flagged in the campaign analytics (daily and hourly)?",
+        "why": "Link previews inflate counts. Flagging needs another schema change.",
+        "options": [
+          "Count all GETs",
+          "Flag via a User-Agent heuristic (new column)",
+          "Exclude bots"
+        ],
+        "default": "Count all GETs, and document that counts include automated GETs.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-7",
+        "question": "Under a held write lock, should the redirect give up on the click quickly or wait longer to record it?",
+        "why": "This sets the default and the recommended value for SQLITE_BUSY_TIMEOUT_MS: redirect latency versus completeness of the hourly analytics.",
+        "options": [
+          "Short wait, 200\u20131000 ms",
+          "Current 5000 ms default"
+        ],
+        "default": "The code default stays 5000 ms. The campaign runbook recommends 1000 ms.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-8",
+        "question": "Is MySQL actually used anywhere, and can operators run the documented ALTER TABLE on existing MySQL databases?",
+        "why": "The model change only affects fresh databases.",
+        "options": [
+          "Not used: declare the collation and document the DDL",
+          "Used: the DDL is a pre-launch step"
+        ],
+        "default": "Not used for the campaign. FR-19 stays a 'could'.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-9",
+        "question": "Who runs the pre-launch smoke check (~50 RPS for a short period) against the production instance, and with what tool?",
+        "why": "The CI tests run in process and leave out network and host differences.",
+        "options": [
+          "Operations, with existing tooling",
+          "Skip it"
+        ],
+        "default": "Operations runs it with existing tooling, following the OPERATIONS.md checklist (NFR-20).",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-10",
+        "question": "What is the exact instant at which campaign links stop working: 31 Dec 23:59:00 UTC, or the end of that minute (1 Jan 00:00:00 UTC)? Which year?",
+        "why": "The code does not hard-code the instant: expires_at is data set by the client and compared with now >= expires_at. The answer only changes the value operators enter and the example in the runbook. Entering a wrong value or year would cut links off early or leave them live.",
+        "options": [
+          "2025-12-31T23:59:00Z (stop at the start of 23:59)",
+          "2026-01-01T00:00:00Z (stop after the 23:59 minute)",
+          "Another date"
+        ],
+        "default": "Use expires_at = 23:59:00Z on 31 December of the campaign year (taken as the coming 31 December), as the amendment literally states. Operators confirm the year with marketing before running the runbook step.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-11",
+        "question": "How is the campaign end applied: per link (set on create plus PATCH for existing links), as a bulk operation over a list of codes, or as a global cutoff setting? Do campaign links already exist?",
+        "why": "A global cutoff would also expire non-campaign links. A bulk endpoint means more API surface. Per-link PATCH works but means one call per link.",
+        "options": [
+          "Per link: expires_at on create plus PATCH for existing links",
+          "Plus a bulk set-expiry endpoint by code list",
+          "A global CAMPAIGN_ENDS_AT setting that applies to all links"
+        ],
+        "default": "Per-link expiry (FR-23) plus PATCH for existing links (FR-24). Operators script one PATCH per campaign link and verify it with the detail endpoint. No bulk endpoint and no global cutoff.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-12",
+        "question": "How should hourly analytics be shaped: UTC hours only, or the broadcast timezone (including half-hour offsets)? Zero-filled or sparse? What maximum range? Per link only, or also aggregated across all campaign links?",
+        "why": "These choices change the endpoint parameters, the response shape and the query cost. Ad slots in local time may not line up with UTC hours in half-hour-offset zones.",
+        "options": [
+          "UTC hours, zero-filled, max 31 days, per link",
+          "Accept a tz/offset parameter and bucket by local hour",
+          "Sparse buckets",
+          "Campaign-wide aggregate across several codes"
+        ],
+        "default": "UTC hours, zero-filled, half-open [start, end), at most 744 hours, per link only. The runbook explains how to convert slot times to UTC.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-13",
+        "question": "What should a visitor see when following an expired link: a 410 JSON error, or a redirect to a 'campaign has ended' landing page?",
+        "why": "Billboards will stay up after the campaign. A fallback URL would need a new setting or a per-link field, and a different status code.",
+        "options": [
+          "410 JSON {\"detail\": \"Link has expired\"}",
+          "307 to a configurable fallback URL",
+          "An HTML 'campaign ended' page"
+        ],
+        "default": "410 JSON 'Link has expired', consistent with deactivated links. The fallback landing page is out of scope.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-14",
+        "question": "Can an expiry be extended or cleared after it has passed, which would revive the link?",
+        "why": "Allowing this supports extending the campaign and recovering from mistakes, but changes the 'stops working' guarantee into one that operators control.",
+        "options": [
+          "Allow it through PATCH (null or a future value)",
+          "Expiry is final once reached"
+        ],
+        "default": "Allowed through PATCH with the API key (FR-24). Deactivation stays final.",
+        "blocking": false,
+        "resolved_by": null
+      }
+    ],
+    "assumptions": [
+      "Production campaign profile: one app instance, one uvicorn worker, SQLite with WAL on local disk, ~50 RPS, redirect p95 < 100 ms, best-effort availability (Q-1, Q-2).",
+      "New ids continue from FR-1..FR-21 and NFR-1..NFR-20. Earlier requirements stay in force and are protected by FR-21.",
+      "Errors stay JSON-only ({\"detail\": ...}). Expired links return 410 with detail 'Link has expired', and deactivated links keep their existing 410 detail.",
+      "All timestamps are stored as naive UTC. Inputs with an offset are converted to UTC, naive inputs are treated as UTC, and outputs are serialised as UTC with 'Z' via _as_utc.",
+      "Expiry is evaluated per request against the server clock (assumed NTP-synchronised): a link is expired when now >= expires_at.",
+      "There is no migration tooling such as Alembic. The only schema change is the nullable links.expires_at, applied by an idempotent startup upgrade (FR-26). The MySQL collation declaration affects only fresh databases.",
+      "WAL, synchronous=NORMAL and the busy timeout are applied only to file-based SQLite. Enabling WAL on an existing database file is automatic and persists.",
+      "Engine, pool and settings stay per app (created in create_app and stored on app.state).",
+      "No new runtime dependencies are added, and no calls are made to third-party services.",
+      "CI latency checks run in process through TestClient. The production check is the pre-launch smoke test (NFR-20).",
+      "The daily stats endpoint keeps its contract and LinkStatsResponse is unchanged. Hourly data is served from a separate endpoint.",
+      "Hourly analytics are derived from the existing click_events.created_at and the (link_id, created_at) index. No new table or index is added.",
+      "Load balancer, TLS, CDN and process-supervisor configuration is handled outside this codebase."
+    ],
+    "out_of_scope": [
+      "Redirect response caching of any kind. Cache-Control: no-store is kept.",
+      "Asynchronous, batched or queued click ingestion.",
+      "Bot or crawler detection and filtering of clicks.",
+      "Vanity aliases, branded domains, and changes to the code alphabet.",
+      "HTML landing or error pages, and a fallback redirect for expired links (Q-13).",
+      "Bulk set-expiry endpoints and a global campaign cutoff setting (Q-11).",
+      "Hourly bucketing in non-UTC timezones, and stats aggregated across several links (Q-12).",
+      "Automatic purge or deletion of expired links and their clicks.",
+      "Rate limiting and DDoS protection.",
+      "Link-safety scanning.",
+      "Migration tooling (Alembic), denormalised click counters, and new indexes on existing tables.",
+      "Adding a PostgreSQL or MySQL driver, or actually migrating production to PostgreSQL. Only the documentation of that path is in scope.",
+      "Running SQLite with several workers or replicas, high availability, failover and multi-region deployment.",
+      "Load targets above ~50 RPS, and SLOs beyond best effort.",
+      "A load-testing harness for production in this repository."
+    ],
+    "risks": [
+      {
+        "id": "RK-1",
+        "description": "TV ad spikes may briefly exceed ~50 RPS. SQLite is single-writer, so latency can rise or clicks can be dropped, and dropped clicks make the hourly analytics less accurate.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Best-effort click writes with a bounded busy_timeout (FR-15, NFR-12); the burst test (NFR-19); logging of dropped clicks without the IP so drops can be counted per hour; a recommended timeout of 1000 ms; and the documented PostgreSQL path."
+      },
+      {
+        "id": "RK-2",
+        "description": "WAL changes the on-disk files and the backup procedure, fails on network filesystems, and does not apply to in-memory databases.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Apply WAL only to file-based SQLite; add pragma tests and an upgrade test (NFR-18); update the backup and runbook docs (FR-20)."
+      },
+      {
+        "id": "RK-3",
+        "description": "Moving the daily or hourly stats to SQL aggregation could change bucketing or window edges across dialects.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Use the existing stats tests, unmodified, as the oracle; add explicit hourly boundary tests; compile per dialect; allow streaming with Python bucketing as a fallback."
+      },
+      {
+        "id": "RK-4",
+        "description": "Changing the probe routing could disturb the catch-all order, the OpenAPI paths or the 405 behaviour.",
+        "likelihood": "low",
+        "impact": "medium",
+        "mitigation": "Use api_route(methods=['GET','HEAD']) on the probes and keep the redirect router last; assert the behaviour listed in FR-14."
+      },
+      {
+        "id": "RK-5",
+        "description": "Short busy timeouts drop clicks under contention.",
+        "likelihood": "medium",
+        "impact": "low",
+        "mitigation": "Make the timeout configurable (Q-7), log each drop, and document the trade-off."
+      },
+      {
+        "id": "RK-6",
+        "description": "The load tests may be flaky on slow CI runners.",
+        "likelihood": "medium",
+        "impact": "low",
+        "mitigation": "Mark them slow, use a paced generator, treat zero 5xx as the primary assertion, and keep the burst threshold generous."
+      },
+      {
+        "id": "RK-7",
+        "description": "The MySQL collation fix does not reach existing deployments without the manual DDL.",
+        "likelihood": "low",
+        "impact": "low",
+        "mitigation": "Production is SQLite. Document the DDL."
+      },
+      {
+        "id": "RK-8",
+        "description": "The one-week deadline leaves little time for review and a staged rollout. The scope has grown with expiry, PATCH, hourly stats and the migration.",
+        "likelihood": "high",
+        "impact": "high",
+        "mitigation": "Priority order:\n1. FR-26 and FR-22/23/24 (the campaign end is a hard business requirement), then FR-15/16, FR-25, FR-14, FR-21 and FR-20.\n2. FR-18 and FR-17.\n3. FR-19.\n\nKeep defaults that preserve current behaviour, and run the NFR-20 checklist on the production host."
+      },
+      {
+        "id": "RK-9",
+        "description": "Best effort on one instance means a host failure is a full outage, and data loss is possible without backups.",
+        "likelihood": "low",
+        "impact": "high",
+        "mitigation": "Accepted per Q-1. Document the supervisor restart, HEAD /readyz monitoring, WAL-safe backups and recovery."
+      },
+      {
+        "id": "RK-10",
+        "description": "Operators may run several uvicorn workers on SQLite.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "The campaign section states one worker, the startup log makes the configuration visible, and the PostgreSQL path is documented."
+      },
+      {
+        "id": "RK-11",
+        "description": "Schema drift: if the startup upgrade does not run or is not correct, every query on links fails against the deployed shortener.db, and every redirect returns 503 during the campaign.",
+        "likelihood": "medium",
+        "impact": "high",
+        "mitigation": "Ship the idempotent startup upgrade (FR-26), which fails startup loudly instead of serving 503s. Test it against a database with the old schema, back up before deploying, and document the manual SQL as a fallback."
+      },
+      {
+        "id": "RK-12",
+        "description": "Operators forget to set expiry on some existing campaign links, or enter the wrong instant or year, so links stay live after the campaign or stop early.",
+        "likelihood": "medium",
+        "impact": "high",
+        "mitigation": "Add a runbook step listing every campaign code with PATCH, verify each with GET /api/links/{code} (expires_at and is_expired), and make it a pre-launch checklist item (NFR-20). Get the instant and year confirmed (Q-10). PATCH allows correction (Q-14)."
+      },
+      {
+        "id": "RK-13",
+        "description": "Timezone mistakes: aware and naive comparisons raise errors (500), or local times are misread, so expiry or hourly buckets are off by the UTC offset.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Normalise all inputs to naive UTC at the schema or service boundary; add offset tests including +05:30 (NFR-22); give UTC conversion guidance for ad slots in the runbook."
+      },
+      {
+        "id": "RK-14",
+        "description": "Expiry is enforced on GET but missed on HEAD, or clicks are recorded for expired links.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Use one shared helper for both resolve methods, and test GET and HEAD at the boundary, asserting that no click is recorded (FR-22)."
+      },
+      {
+        "id": "RK-15",
+        "description": "Changing the idempotency hash breaks replays of keys stored before the deploy, which then return 409.",
+        "likelihood": "low",
+        "impact": "medium",
+        "mitigation": "Hash the url alone when expires_at is absent and use a canonical url plus UTC instant form otherwise. Test that keys stored before the deploy still replay (FR-21, FR-23)."
+      },
+      {
+        "id": "RK-16",
+        "description": "Adding expires_at and is_expired to the create and detail responses breaks existing tests that compare whole bodies.",
+        "likelihood": "medium",
+        "impact": "low",
+        "mitigation": "Allow existing exact-body assertions to be extended only with the new fields (FR-21). LinkStatsResponse stays untouched."
+      }
+    ]
+  }
+}

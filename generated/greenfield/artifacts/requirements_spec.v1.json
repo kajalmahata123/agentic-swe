@@ -1,0 +1,406 @@
+{
+  "name": "requirements_spec",
+  "version": 1,
+  "hash": "f9e39c09ed667d11",
+  "producer": "requirements",
+  "derived_from": {
+    "requirement": "5ee67f561141fd3d"
+  },
+  "value": {
+    "title": "Production-ready URL Shortener HTTP Service",
+    "problem_statement": "Build a greenfield HTTP service (Python 3.11, FastAPI, SQLAlchemy 2.0, Pydantic v2) where clients create short links for long http/https URLs. Visiting a short link redirects to the original URL with HTTP 307. Clients can look up and soft-delete links. Every redirect is recorded as a privacy-preserving click event (timestamp, referrer, user agent; never the raw IP), and per-link stats are available (total clicks, clicks per UTC day, top referrers). The service must hold up in production: strict URL validation, random collision-safe short codes backed by a DB unique constraint, idempotent creation through an Idempotency-Key header, liveness/readiness probes, and consistent JSON errors that never leak stack traces. Persistence is relational through SQLAlchemy: SQLite by default, configurable via DATABASE_URL. The workspace is empty apart from .gitignore, so there is no existing code to protect.",
+    "functional": [
+      {
+        "id": "FR-1",
+        "title": "Create short link",
+        "description": "POST /api/links with JSON body {\"url\": string} creates a new active short link and returns its metadata.",
+        "acceptance_criteria": [
+          "Given a valid body {\"url\":\"https://example.com/a?b=1\"}, the response is 201 with JSON containing: code (string), short_url (string equal to BASE_URL with trailing slash stripped + '/' + code), url (the original URL, unchanged), is_active (true), created_at (ISO 8601 UTC timestamp).",
+          "The response includes a Location header pointing to /api/links/{code}.",
+          "Sending the same URL twice without an Idempotency-Key creates two distinct links with different codes (no implicit dedup).",
+          "After creation, GET /api/links/{code} returns 200 with the same metadata.",
+          "A missing body, a missing 'url' field or a non-string 'url' returns 422 with a JSON body containing a 'detail' key."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-2",
+        "title": "URL validation",
+        "description": "Only absolute http/https URLs of at most 2048 characters are accepted.",
+        "acceptance_criteria": [
+          "URLs with scheme http or https (case-insensitive, e.g. 'HTTPS://example.com') and a non-empty host are accepted (201).",
+          "A URL of exactly 2048 characters is accepted; one of 2049 characters returns 422.",
+          "The URLs 'javascript:alert(1)', 'data:text/html,hi', 'file:///etc/passwd', 'ftp://example.com' and 'mailto:a@b.c' each return 422 with a 'detail' key.",
+          "Relative or host-less URLs ('/path', 'example.com', 'http://', 'https:///x') return 422.",
+          "URLs containing whitespace or ASCII control characters (e.g. 'http://exa mple.com', or ones with \\n or \\t) return 422.",
+          "An empty string returns 422.",
+          "No link is persisted when validation fails."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-3",
+        "title": "Random, URL-safe, collision-safe short codes",
+        "description": "Codes are produced by a CSPRNG (Python `secrets`) from the base62 alphabet [A-Za-z0-9], length 7 by default (configurable via SHORT_CODE_LENGTH). The links.code column has a DB unique constraint. On a collision the service retries with a new code.",
+        "acceptance_criteria": [
+          "Every generated code matches ^[A-Za-z0-9]{7}$ by default.",
+          "The links.code column has a unique constraint/index in the ORM model; inserting a duplicate directly through the ORM raises an IntegrityError.",
+          "If the code generator is forced (via monkeypatch) to return an existing code first and then a fresh one, creation succeeds with the fresh code and returns 201.",
+          "If every attempt collides (max 5 attempts, configurable), the API returns 503 with {\"detail\": \"...\"} and no stack trace.",
+          "Generated codes never equal a reserved path segment (e.g. 'healthz', 'readyz', 'api', 'docs', 'redoc', 'openapi.json'); a reserved candidate is discarded and regenerated.",
+          "Creating 1000 links in a test yields 1000 unique codes."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-4",
+        "title": "Idempotent creation via Idempotency-Key",
+        "description": "When POST /api/links carries an Idempotency-Key header, repeat requests with the same key and the same payload return the originally created link instead of creating a new one.",
+        "acceptance_criteria": [
+          "Two POSTs with the same Idempotency-Key and identical body both return 201 with an identical body (same code), and only one link row exists.",
+          "The replayed response includes the header 'Idempotent-Replayed: true'; the first response does not.",
+          "Reusing the same Idempotency-Key with a different 'url' returns 409 with a 'detail' key, and no new link is created.",
+          "An Idempotency-Key that is empty or longer than 255 characters returns 400 (or 422) with a 'detail' key.",
+          "Different Idempotency-Keys with the same body create distinct links.",
+          "Idempotency keys are enforced by a DB unique constraint, so two concurrent identical requests produce at most one link (the losing request either replays the stored result or gets 409; it never returns 500).",
+          "Requests without the header behave exactly as in FR-1."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-5",
+        "title": "Redirect to original URL",
+        "description": "GET /{code} redirects active links with HTTP 307.",
+        "acceptance_criteria": [
+          "GET /{code} for an active link returns 307 with the Location header exactly equal to the stored original URL (test with follow_redirects=False).",
+          "GET /{code} for an unknown code returns 404 with JSON {\"detail\": \"...\"}.",
+          "GET /{code} for a deactivated link returns 410 with JSON {\"detail\": \"...\"} and does not redirect (see Q-2).",
+          "HEAD /{code} behaves like GET for status and Location (should-level; a 405 is acceptable if not implemented).",
+          "The redirect response sets 'Cache-Control: no-store' (or private, max-age=0) so that clicks keep being counted and deactivation takes effect immediately."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-6",
+        "title": "Look up link metadata",
+        "description": "GET /api/links/{code} returns a link's metadata.",
+        "acceptance_criteria": [
+          "For an existing link it returns 200 with code, short_url, url, is_active, created_at, deactivated_at (null when active) and total_clicks (integer).",
+          "Deactivated links are still returned (200) with is_active=false and deactivated_at set.",
+          "An unknown code returns 404 with a 'detail' key.",
+          "A code containing characters outside [A-Za-z0-9] returns 404 (or 422), never 500."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-7",
+        "title": "Deactivate (soft-delete) link",
+        "description": "DELETE /api/links/{code} marks a link inactive without removing its row or its click history.",
+        "acceptance_criteria": [
+          "DELETE on an active link returns 204 with no body; the row stays in the DB with is_active=false and deactivated_at set to the current UTC time.",
+          "After deactivation GET /{code} no longer redirects (410 per FR-5).",
+          "Calling DELETE again on an already-deactivated link returns 204 and leaves deactivated_at unchanged (idempotent).",
+          "DELETE on an unknown code returns 404 with a 'detail' key.",
+          "Click events recorded before deactivation remain and still appear in the stats."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-8",
+        "title": "Record click events",
+        "description": "Every successful redirect (307) persists a click event with link id, UTC timestamp, referrer and user agent. The raw client IP is never stored.",
+        "acceptance_criteria": [
+          "After N successful GET /{code} requests, the link has exactly N click events.",
+          "Each event stores created_at (UTC), the Referer header value (null if absent) and the User-Agent header value (null if absent).",
+          "Referrer values are truncated to 2048 characters and user agents to 512 characters; oversized headers never cause an error.",
+          "404 and 410 responses do not create click events.",
+          "The click_events table has no column holding a raw IP. If IP_HASH_SALT is configured, an ip_hash column stores the SHA-256 HMAC of the client IP keyed by the salt. If it is not configured, ip_hash is null.",
+          "A test confirms that the client IP string (e.g. 'testclient' or a fixed X-Forwarded-For value) appears in no column of any stored row.",
+          "If recording the click fails (e.g. a DB error on insert), the redirect still returns 307 and the failure is logged (should-level)."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-9",
+        "title": "Per-link stats",
+        "description": "GET /api/links/{code}/stats returns aggregated analytics.",
+        "acceptance_criteria": [
+          "Response 200 has the JSON shape {code, total_clicks: int, clicks_per_day: [{date: 'YYYY-MM-DD', count: int}], top_referrers: [{referrer: string|null, count: int}]}.",
+          "total_clicks equals the number of click events for the link.",
+          "clicks_per_day groups events by UTC calendar date, sorted ascending by date. It includes only days that have clicks, covering the last 30 days by default. The optional query parameter days (integer 1\u2013365) changes the window, and an out-of-range value returns 422.",
+          "top_referrers is sorted by count descending, then referrer ascending, and limited to 10 entries. Clicks with no referrer are grouped under referrer=null.",
+          "A link with no clicks returns total_clicks=0, clicks_per_day=[] and top_referrers=[].",
+          "Stats are available for deactivated links (200).",
+          "An unknown code returns 404 with a 'detail' key.",
+          "Day bucketing is verified with click events inserted at controlled timestamps on either side of UTC midnight."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-10",
+        "title": "Liveness and readiness probes",
+        "description": "GET /healthz reports that the process is alive. GET /readyz checks database connectivity.",
+        "acceptance_criteria": [
+          "GET /healthz returns 200 {\"status\": \"ok\"} without touching the database.",
+          "GET /readyz returns 200 {\"status\": \"ready\"} when a trivial query (SELECT 1) succeeds.",
+          "When the DB check fails (simulated by overriding the session dependency to raise), GET /readyz returns 503 with {\"detail\": \"...\"} and no exception text or stack trace.",
+          "Neither endpoint is shadowed by the GET /{code} route."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-11",
+        "title": "Consistent JSON error responses",
+        "description": "Every error response is JSON with a 'detail' key and the correct status code. Unhandled exceptions become a generic 500.",
+        "acceptance_criteria": [
+          "404, 405, 409, 410, 422 and 503 responses all have Content-Type application/json and a 'detail' key.",
+          "An unhandled exception raised inside a route (simulated in a test) returns 500 with exactly {\"detail\": \"Internal Server Error\"}. The body contains no traceback, exception class name or exception message.",
+          "The unhandled exception is logged server-side with its traceback.",
+          "Unknown routes under /api/ return 404 JSON."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-12",
+        "title": "Configuration and persistence",
+        "description": "Settings come from environment variables: DATABASE_URL (default sqlite:///./shortener.db), BASE_URL (default http://localhost:8000), SHORT_CODE_LENGTH (default 7), IP_HASH_SALT (optional), LOG_LEVEL (default INFO). Tables are created on startup when absent.",
+        "acceptance_criteria": [
+          "With DATABASE_URL pointing at a temporary SQLite file, the app creates the links, click_events and idempotency-key tables at startup and serves requests.",
+          "short_url in responses uses the configured BASE_URL.",
+          "The ORM uses SQLAlchemy 2.0 DeclarativeBase/Mapped and only portable column types (no SQLite-only SQL), so it runs on Postgres/MySQL by changing the URL.",
+          "app/main.py exposes create_app() and a module-level app = create_app()."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-13",
+        "title": "OpenAPI documentation",
+        "description": "The FastAPI-generated OpenAPI schema documents every endpoint with its request/response models.",
+        "acceptance_criteria": [
+          "GET /openapi.json returns 200 and lists POST /api/links, GET /api/links/{code}, DELETE /api/links/{code}, GET /api/links/{code}/stats, GET /{code}, GET /healthz and GET /readyz.",
+          "Response models for create, metadata and stats appear as named schemas."
+        ],
+        "priority": "should"
+      }
+    ],
+    "non_functional": [
+      {
+        "id": "NFR-1",
+        "category": "privacy",
+        "requirement": "Raw client IP addresses are never persisted or logged. At most an HMAC-SHA256 hash keyed by a server-side salt (IP_HASH_SALT) is stored, and nothing is stored when no salt is configured.",
+        "measure": "Automated test scans all stored click_events rows and captured log output for the client IP string and finds no match. Code review confirms there is no IP column in the models."
+      },
+      {
+        "id": "NFR-2",
+        "category": "security",
+        "requirement": "Only http/https URLs are stored, which prevents open redirects to javascript:/data:/file: payloads. Code generation uses a CSPRNG. All DB access goes through the SQLAlchemy ORM or bound parameters, never string-formatted SQL. No eval/exec or shell=True.",
+        "measure": "FR-2 negative tests pass. Static review/grep finds no 'random.' use for code generation, no f-string or %-formatted SQL, and no eval/exec."
+      },
+      {
+        "id": "NFR-3",
+        "category": "security",
+        "requirement": "Error responses never expose stack traces, exception messages, SQL or internal paths.",
+        "measure": "Test from FR-11 asserts the 500 body equals {\"detail\":\"Internal Server Error\"}. The readiness failure test asserts the body contains no exception text."
+      },
+      {
+        "id": "NFR-4",
+        "category": "performance",
+        "requirement": "With the default SQLite DB holding 10,000 links on a developer machine, the redirect endpoint (including click recording) has p95 latency under 50 ms and link creation has p95 under 100 ms (in-process TestClient).",
+        "measure": "A performance test or script (may be marked slow/optional) times 500 redirects and 200 creations and checks the p95. Indexes exist on links.code (unique) and click_events(link_id, created_at)."
+      },
+      {
+        "id": "NFR-5",
+        "category": "reliability",
+        "requirement": "Code uniqueness and idempotency are guaranteed by DB unique constraints, not only by application checks. IntegrityErrors are handled (retry or replay) and never surface as 500.",
+        "measure": "Tests from FR-3 and FR-4 (forced collision, duplicate key insert) pass. The schema shows unique constraints on links.code and the idempotency key."
+      },
+      {
+        "id": "NFR-6",
+        "category": "maintainability",
+        "requirement": "Layered architecture: app/api -> app/services -> app/repositories -> app/models, with schemas in app/schemas and config/db/errors/logging in app/core. Dependencies point inward only.",
+        "measure": "Review/grep: app/services contains no FastAPI imports, app/repositories contains no imports from app/api or app/services, and app/models imports nothing from outer layers."
+      },
+      {
+        "id": "NFR-7",
+        "category": "maintainability",
+        "requirement": "Automated tests cover every must-level FR. Each test is isolated with a fresh temporary SQLite DB and names the requirements it covers in its docstring ('Covers: FR-n').",
+        "measure": "`python -m pytest -q` passes. Grepping test docstrings shows at least one test per must-level FR-1..FR-12. Line coverage of app/ is at least 85% when measured."
+      },
+      {
+        "id": "NFR-8",
+        "category": "operability",
+        "requirement": "Logging is structured (one line per request, with method, path, status and duration in ms) and the level is set by LOG_LEVEL. Container orchestrators can use /healthz and /readyz.",
+        "measure": "Test with caplog asserts a request log record contains status and path and no client IP. The FR-10 tests pass."
+      },
+      {
+        "id": "NFR-9",
+        "category": "scalability",
+        "requirement": "The service is stateless apart from the database, so multiple instances can run against one shared Postgres/MySQL database. No in-memory state is required for correctness (idempotency and uniqueness live in the DB).",
+        "measure": "Code review: no module-level mutable caches are used for idempotency or code allocation. Dependencies are pinned in requirements.txt."
+      }
+    ],
+    "ambiguities": [
+      {
+        "id": "Q-1",
+        "question": "Do the management endpoints (create, lookup, deactivate, stats) need authentication or authorization?",
+        "why": "Without auth, anyone who knows a code can deactivate a link or read its stats. Per-user ownership would add a users model and change every endpoint.",
+        "options": [
+          "No authentication (open API)",
+          "A single static API key from the API_KEY env var, sent as an X-API-Key header",
+          "Per-user accounts with link ownership"
+        ],
+        "default": "No authentication in this iteration. The endpoints are designed so an API-key dependency can be added later on the /api router without changing the contract. Recorded as a risk.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-2",
+        "question": "What status should a redirect to a deactivated link return?",
+        "why": "Affects only the redirect handler's status code and its test.",
+        "options": [
+          "410 Gone",
+          "404 Not Found (indistinguishable from unknown)"
+        ],
+        "default": "410 Gone with a JSON 'detail' key.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-3",
+        "question": "Idempotency semantics: how long are keys kept, what is their scope, and what status does a replay return?",
+        "why": "Affects the idempotency table design and how the responses are asserted.",
+        "options": [
+          "Keys kept forever, global scope, replay returns the original 201 body",
+          "Keys expire after 24h",
+          "Replay returns 200"
+        ],
+        "default": "Global scope, no expiry in this iteration. A replay with the same payload returns 201 and the identical body plus 'Idempotent-Replayed: true'. A different payload returns 409.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-4",
+        "question": "Should clients be able to choose custom aliases, or set link expiration?",
+        "why": "Would add fields, validation and conflict handling.",
+        "options": [
+          "No (random codes only, no expiry)",
+          "Custom aliases",
+          "Expiry timestamps"
+        ],
+        "default": "Not supported. Random codes only, no expiry.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-5",
+        "question": "Does 'production-ready' imply specific performance or availability targets?",
+        "why": "Hard SLOs could require caching or async workers for click recording.",
+        "options": [
+          "Targets as in NFR-4 (p95 < 50 ms redirect on SQLite)",
+          "Externally specified SLOs"
+        ],
+        "default": "Use the NFR-4 targets. Click recording is synchronous, in the same request.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-6",
+        "question": "What date window and referrer limit should the stats use?",
+        "why": "Affects the stats query and its response size.",
+        "options": [
+          "Last 30 days and top 10 referrers, with a 'days' query parameter (1\u2013365)",
+          "All-time daily series"
+        ],
+        "default": "Last 30 days by default (configurable with 'days'), top 10 referrers, and total_clicks counted all-time.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-7",
+        "question": "Which client IP should be hashed when the service runs behind a proxy (X-Forwarded-For or socket peer)?",
+        "why": "Affects only the value that gets hashed. Raw IPs are never stored either way.",
+        "options": [
+          "Socket peer address only",
+          "First X-Forwarded-For entry when trusted"
+        ],
+        "default": "Use the socket peer address (request.client.host). Ignore X-Forwarded-For unless a future TRUSTED_PROXIES setting is added.",
+        "blocking": false,
+        "resolved_by": null
+      }
+    ],
+    "assumptions": [
+      "This is a greenfield project; the workspace contains only .gitignore.",
+      "The API is JSON over HTTP, with management routes under /api/links and redirects at the root path /{code}.",
+      "Codes are 7 base62 characters (about 3.5e12 combinations) generated with `secrets`, with up to 5 retries on collision.",
+      "short_url is built from the BASE_URL env var (default http://localhost:8000).",
+      "Original URLs are stored exactly as submitted (no normalization), apart from validation.",
+      "All timestamps are stored and returned in UTC, in ISO 8601 format.",
+      "Schema creation uses Base.metadata.create_all at startup; migrations (Alembic) are not required in this iteration.",
+      "Click recording is synchronous, in the same transaction scope as the redirect request.",
+      "Validation errors use FastAPI's 422 with a 'detail' key (Pydantic's error list is acceptable as the detail value).",
+      "Rate limiting and abuse protection are handled by infrastructure (reverse proxy/API gateway) for now."
+    ],
+    "out_of_scope": [
+      "User accounts, authentication and authorization (see Q-1)",
+      "Custom aliases/vanity codes and link expiration",
+      "Editing a link's target URL after creation",
+      "Hard delete / purging of links or click data",
+      "Rate limiting, malware/phishing URL scanning, CAPTCHA",
+      "Geo-IP or device analytics beyond the raw user-agent string",
+      "A UI/dashboard, QR codes",
+      "Database migrations tooling and multi-region deployment",
+      "Caching layers (Redis) and asynchronous click ingestion"
+    ],
+    "risks": [
+      {
+        "id": "R-1",
+        "description": "Without authentication, anyone can deactivate links or read their stats if they know or guess a code.",
+        "likelihood": "medium",
+        "impact": "high",
+        "mitigation": "Keep the API contract compatible with adding an X-API-Key dependency on the /api router. Document the gap. Codes are high-entropy, so guessing is impractical. Escalate Q-1 to stakeholders before public launch."
+      },
+      {
+        "id": "R-2",
+        "description": "The shortener could be abused for open redirects or phishing (redirecting to malicious http/https sites).",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Allow only http/https schemes (FR-2), use soft-delete for takedowns (FR-7), and leave URL reputation scanning and rate limiting to a future iteration or the infrastructure."
+      },
+      {
+        "id": "R-3",
+        "description": "The GET /{code} catch-all route could shadow /healthz, /readyz, /docs or /openapi.json, or a generated code could equal a reserved word.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Register fixed routes before the catch-all, keep a reserved-word list in code generation (FR-3), and test that the probes and docs are reachable."
+      },
+      {
+        "id": "R-4",
+        "description": "Under SQLite, concurrent writes (click events plus creation) can hit 'database is locked' errors.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Use check_same_thread=False and short transactions, keep click-recording failures from breaking redirects (FR-8), and document Postgres for production through DATABASE_URL."
+      },
+      {
+        "id": "R-5",
+        "description": "Click-recording writes on every redirect may become the latency bottleneck at high traffic.",
+        "likelihood": "low",
+        "impact": "medium",
+        "mitigation": "Index click_events(link_id, created_at), measure against NFR-4, and plan async/batched ingestion as a future enhancement."
+      },
+      {
+        "id": "R-6",
+        "description": "UTC day bucketing may behave differently across SQLite, Postgres and MySQL date functions.",
+        "likelihood": "medium",
+        "impact": "low",
+        "mitigation": "Bucket by UTC date in a portable way (e.g. aggregate in Python over the windowed rows, or use func.date on UTC-stored naive timestamps) and test across midnight boundaries."
+      },
+      {
+        "id": "R-7",
+        "description": "Race conditions when the same Idempotency-Key arrives concurrently.",
+        "likelihood": "low",
+        "impact": "medium",
+        "mitigation": "Put a unique constraint on the key. Handle IntegrityError by re-reading the stored key and either replaying it or returning 409, and add a test that simulates the insert race."
+      }
+    ]
+  }
+}

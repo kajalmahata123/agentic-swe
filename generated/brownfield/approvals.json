@@ -1,0 +1,464 @@
+[
+  {
+    "id": "apr_e34216999911",
+    "run_id": "run_2e7440e535cd",
+    "node_id": "design",
+    "kind": "design",
+    "summary": "Approve architecture & plan: 7 endpoints, 2 entities, 6 work packages, 8 ADRs",
+    "payload": {
+      "api_contract": [
+        "POST /api/links \u2014 Create a short link, optionally with a custom alias and/or an expiry. Requires X-API-Key. Optional header Idempotency-Key (1-255 chars, not blank). Sets Location: /api/links/{code}. A replay sets Idempotent-Replayed: true and returns the original link's current state.",
+        "GET /api/links/{code} \u2014 Get link metadata (active, deactivated or expired). Requires X-API-Key. {code} accepts ^[A-Za-z0-9_-]{1,32}$. Anything else gives 404 without a DB lookup.",
+        "DELETE /api/links/{code} \u2014 Soft-delete (deactivate) a link. Idempotent. Works for expired links and aliases containing '-'/'_'. Requires X-API-Key.",
+        "GET /api/links/{code}/stats \u2014 Click statistics. Works for deactivated and expired links and aliases containing '-'/'_'. Requires X-API-Key.",
+        "GET /{code} \u2014 Public redirect (catch-all router, registered last). 307 with the exact stored URL in Location (not re-quoted) and Cache-Control: no-store. Records a click best-effort. HEAD /{code} behaves the same but records no click, and is now included in OpenAPI with the same 307/404/410 responses. 404/410 send no Location and record no click.",
+        "GET /healthz \u2014 Liveness probe (unchanged, not shadowed by /{code})",
+        "GET /readyz \u2014 Readiness probe (unchanged, not shadowed by /{code})"
+      ],
+      "work_packages": [
+        {
+          "id": "WP-1",
+          "title": "Domain primitives: 422/expired errors and code rules",
+          "files": [
+            "app/core/errors.py",
+            "app/services/codes.py"
+          ],
+          "depends_on": []
+        },
+        {
+          "id": "WP-2",
+          "title": "Schema change: Link.expires_at and idempotent startup migration",
+          "files": [
+            "app/models/link.py",
+            "app/core/db.py",
+            "app/main.py"
+          ],
+          "depends_on": []
+        },
+        {
+          "id": "WP-3",
+          "title": "Request/response schemas: alias, expires_at, is_expired",
+          "files": [
+            "app/schemas/links.py"
+          ],
+          "depends_on": []
+        },
+        {
+          "id": "WP-4",
+          "title": "Service rules: alias create path, expiry, idempotency hash, widened lookup",
+          "files": [
+            "app/services/link_service.py",
+            "app/services/stats_service.py"
+          ],
+          "depends_on": [
+            "WP-1",
+            "WP-2"
+          ]
+        },
+        {
+          "id": "WP-5",
+          "title": "HTTP layer: pass new fields, map responses, OpenAPI docs, clock wiring",
+          "files": [
+            "app/api/links.py",
+            "app/api/redirect.py",
+            "app/api/deps.py"
+          ],
+          "depends_on": [
+            "WP-3",
+            "WP-4"
+          ]
+        },
+        {
+          "id": "WP-6",
+          "title": "Documentation: CR-142, schema migration, BUG-77 findings, auth corrections",
+          "files": [
+            "docs/API.md",
+            "docs/OPERATIONS.md",
+            "README.md",
+            "CHANGELOG.md"
+          ],
+          "depends_on": []
+        }
+      ],
+      "decisions": [
+        "ADR-1 Alias format in schema, reserved words in service with codes.RESERVED_CODES: LinkCreate validates alias type, length and charset (StrictStr, 3-32, [A-Za-z0-9_-]), giving a FastAPI 422 list detail. LinkService rejects reserved aliases case-insensitively via codes.is_reserved, raising UnprocessableEntityError('Alias is reserved'), which gives 422. 'metrics' is added to codes.RESERVED_CODES, so generated codes and aliases share one list.",
+        "ADR-2 Separate lookup validator instead of widening CODE_PATTERN: Add codes.is_valid_lookup_code (^[A-Za-z0-9_-]{1,32}$) and use it in LinkService._get_or_404 and StatsService.get_stats. is_valid_code_format stays base62-only.",
+        "ADR-3 Alias path is a single insert, and IntegrityError gives 409: If alias is given: pre-check get_by_code (friendly 409), then one LinkRepository.add. On IntegrityError: rollback. If an Idempotency-Key was sent and its record now exists, replay it or return 409. Otherwise raise ConflictError('Alias already in use'). codes.generate_code is never called on this path. The generated-code retry loop is unchanged.",
+        "ADR-4 Idempotent startup migration with literal DDL in core/db.ensure_schema: After create_all, ensure_schema(engine) inspects links. If expires_at is missing, it executes text('ALTER TABLE links ADD COLUMN expires_at DATETIME NULL'). On the postgresql dialect only, it executes text('ALTER TABLE links ADD COLUMN expires_at TIMESTAMP NULL'), because PostgreSQL has no DATETIME type. Both are literal strings passed straight to text(). If the ALTER fails with DBAPIError and the column now exists, this is a tolerated concurrent race. Otherwise it logs an error and re-raises. The manual SQL is documented. No Alembic.",
+        "ADR-5 expires_at: ISO-only parsing in schema, future check in service with an injectable clock: LinkCreate.expires_at: dt.datetime|None with a mode='before' validator that accepts only None, datetime instances, or str matching a strict ISO-8601 date-time regex (rejects int/bool/''/'tomorrow'/date-only/unix strings). Pydantic then parses it (rejecting month 13), and a mode='after' validator normalises it with _as_utc (naive = UTC). LinkService converts to naive UTC and requires expires_at > self.now(). Otherwise it raises UnprocessableEntityError('expires_at must be in the future'). The clock is LinkService(clock=...), which deps fill from app.state.clock (None means models.utcnow, looked up at call time).",
+        "ADR-6 Backwards-compatible idempotency request_hash: compute_request_hash(url, alias, expires_at_naive_utc) returns sha256(url) when alias and expires_at are both None. Otherwise it returns sha256 of json.dumps({'alias':..., 'expires_at': 'YYYY-MM-DDTHH:MM:SS.ffffffZ' or None, 'url':...}, sort_keys=True, separators=(',',':'), ensure_ascii=False). The idempotency lookup runs before the reserved/future checks, so a retried successful request always replays.",
+        "ADR-7 Expiry evaluated from the loaded row; deactivation takes precedence: Link.is_expired_at(now) returns expires_at is not None and expires_at <= now. Redirect and HEAD check `not is_active` first (GoneError, 'Link has been deactivated'), then expiry (LinkExpiredError, 'Link has expired'), before any click insert. is_expired for responses is computed by the service and returned in CreateResult/LinkDetail. is_active is not changed by expiry.",
+        "ADR-8 Expose HEAD /{code} in OpenAPI: Change @router.head('/{code}') to include_in_schema=True with responses 307/404/410, so FR-13's 410 documentation covers HEAD."
+      ],
+      "risks": [
+        {
+          "id": "R1",
+          "description": "Legacy databases lack links.expires_at. Without migration every links query gives 503.",
+          "likelihood": "high",
+          "impact": "high",
+          "mitigation": "ensure_schema runs on every startup after create_all. Legacy-DB boot test run twice (NFR-3). Manual SQL and 'migrate once before multi-instance rollout' in OPERATIONS.md."
+        },
+        {
+          "id": "R2",
+          "description": "A request_hash change breaks replay of stored keys.",
+          "likelihood": "medium",
+          "impact": "medium",
+          "mitigation": "Keep sha256(url) when there are no new fields (ADR-6). Test with a directly inserted legacy row."
+        },
+        {
+          "id": "R3",
+          "description": "Postgres rejects DATETIME, so the required literal DDL alone would break legacy Postgres DBs.",
+          "likelihood": "medium",
+          "impact": "high",
+          "mitigation": "Literal TIMESTAMP branch for the postgresql dialect only (ADR-4). Documented in OPERATIONS.md with per-dialect manual SQL."
+        },
+        {
+          "id": "R4",
+          "description": "Alias race mapped to a retry or 503 instead of 409.",
+          "likelihood": "medium",
+          "impact": "medium",
+          "mitigation": "Separate alias branch (ADR-3). Monkeypatched IntegrityError test asserts 409, rollback, zero extra rows, and that generate_code is not called."
+        },
+        {
+          "id": "R5",
+          "description": "Naive/aware datetime mixing causes a TypeError (500) or shifted expiry.",
+          "likelihood": "medium",
+          "impact": "medium",
+          "mitigation": "Schema normalises to aware UTC. The service converts to naive UTC before compare/persist. now() normalises any aware injected clock. Offset and naive tests."
+        },
+        {
+          "id": "R6",
+          "description": "Lax parsing accepts numeric expires_at.",
+          "likelihood": "medium",
+          "impact": "low",
+          "mitigation": "Before-validator ISO regex (ADR-5). Tests for 1893456000, true, '', 'tomorrow', month 13."
+        },
+        {
+          "id": "R7",
+          "description": "MySQL case-insensitive collation makes 'MyLink'/'mylink' collide and lookups case-insensitive.",
+          "likelihood": "low",
+          "impact": "low",
+          "mitigation": "Documented caveat. Binary collation deferred. Tests use SQLite."
+        },
+        {
+          "id": "R8",
+          "description": "Pydantic constraint handling on Optional StrictStr could let bad aliases through.",
+          "likelihood": "low",
+          "impact": "medium",
+          "mitigation": "Belt and braces: an after-validator re.fullmatch(r'[A-Za-z0-9_-]{3,32}') plus a defensive codes.is_valid_alias check in the service (422). Tests cover every listed bad input."
+        },
+        {
+          "id": "R9",
+          "description": "Computed is_expired makes replay bodies change over time.",
+          "likelihood": "low",
+          "impact": "low",
+          "mitigation": "Documented: replays reflect current state, as is_active already does. Computed from the loaded row."
+        },
+        {
+          "id": "R10",
+          "description": "Widened lookup format changes behaviour for existing malformed-code tests ('abc-def', 'abc_def').",
+          "likelihood": "low",
+          "impact": "low",
+          "mitigation": "These become valid-but-unknown and still return 404, which the existing assertions accept (404/422 and 404 respectively)."
+        }
+      ],
+      "outputs_preview": {
+        "design": {
+          "truncated": "{\"overview\": \"This design changes the existing layered FastAPI/SQLAlchemy URL shortener. It does not redesign it. CR-142 adds (a) client-chosen aliases (3-32 chars [A-Za-z0-9_-], case preserved; reserved words give 422, a taken code gives 409) and (b) an optional future `expires_at` (redirecting an expired link gives 410 'Link has expired'; metadata gains `expires_at` and `is_expired`). Everything is additive. Existing endpoints, fields, status codes, headers, router order and the 165 existing tests are preserved.\\n\\nSchema change (explicit): `links.expires_at DATETIME NULL` (generic sqlalchemy DateTime, naive UTC). Startup runs Base.metadata.create_all and then a new idempotent `ensure_schema(engine)` in app/core/db.py. If the column is missing, it runs the literal `ALTER TABLE links ADD COLUMN expires_at DATETIME NULL`. PostgreSQL has no DATETIME type, so on postgresql it runs the literal `ALTER TABLE links ADD COLUMN expires_at TIMESTAMP NULL` instead (see ADR-4). Existing rows get NULL and never expire. No change is needed to links.code (already VARCHAR(32), UNIQUE uq_links_code) or to idempotency_keys DDL. What request_hash covers widens, but stays backwards compatible.\\n\\nLayering: format and type validation happen in app/schemas (alias pattern; ISO-8601-only expires_at normalised to aware UTC). Business rules happen in app/services/link_service.py: the reserved-word check against codes.RESERVED_CODES (single source of truth, which now includes 'metrics'), the expires_at-in-the-future check against an injectable clock, the alias single-insert path (IntegrityError gives 409), the backwards-compatible idempotency hash, and the expiry check on redirect (from the loaded row, no extra query). Lookups on all code-addressed endpoints use the new codes.is_valid_lookup_code (^[A-Za-z0-9_-]{1,32}$). codes.is_valid_code_format stays base62-only. HEAD /{code} becomes visible in OpenAPI so its 410 is documented (FR-13).\\n\\nBUG-77: no code change to validate_target_url (investigation found no defect). The tests agent adds regression tests, and the docs package records the findings and fixes the stale 'no authentication' statements.\\n\\nNo new dependencies and no new environment variables.\", \"components\": [{\"name\": \"Domain errors\", \"responsibility\": \"Framework-agnostic AppError hierarchy and JSON handlers. Adds UnprocessableEntityError (422) for service-level validation (reserved alias, non-future expires_at, defensive alias format) and LinkExpiredError (410, 'Link has expired', subclass of GoneError). GoneError default 'Link has been deactivated' is unchanged.\", \"files\": [\"app/core/errors.py\"]}, {\"name\": \"Code rules\", \"responsibility\": \"Single source of truth for reserved words (RESERVED_CODES, now including 'metrics'), base62 generation, the unchanged base62 is_valid_code_format, plus the new is_valid_alias (3-32 [A-Za-z0-9_-]) and is_valid_lookup_code (1-32 [A-Za-z0-9_-]).\", \"files\": [\"app/services/codes.py\"]}, {\"name\": \"ORM model + startup migration\", \"responsibility\": \"Link gains expires_at and is_expired_at(now). core/db.ensure_schema adds the missing column idempotently after create_all, tolerates a concurrent 'duplicate column' race, logs one JSON line when it changes the schema, and fails loudly otherwise. main.py calls it in lifespan and initialises the app.state.clock test hook.\", \"files\": [\"app/models/link.py\", \"app/core/db.py\", \"app/main.py\"]}, {\"name\": \"Request/response schemas\", \"responsibility\": \"LinkCreate gains alias (StrictStr, pattern/length) and expires_at (ISO-8601 strings only, normalised to aware UTC). LinkCreatedResponse (and the inheriting LinkDetailResponse) gain expires_at (UTC 'Z') and is_expired. validate_target_url is unchanged. Imports nothing from app.*.\", \"files\": [\"app/schemas/links.py\"]}, {\"name\": \"Link and stats services\", \"responsibility\": \"create_link with alias and expires_at, backwards-compatible idempotency hash, alias 409 path separate from the generated-code retry loop, widened lookup format, expiry 410 on redirect/HEAD (deactivation first), is_expired computed with an injectable clock. StatsService uses the widened lookup check.\", \"files\": [\"app/services/link_service.py\", \"app/services/stats_service.py\"]}, {\"name\": \"HTTP layer\", \"responsibility\": \"Passes alias/expires_at to the service and maps the new response fields. Documents 409/410/422 in OpenAPI and includes HEAD /{code} in the schema. get_link_service passes the optional app.state.clock to LinkService.\", \"files\": [\"app/api/links.py\", \"app/api/redirect.py\", \"app/api/deps.py\"]}, {\"name\": \"Documentation\", \"responsibility\": \"API.md, OPERATIONS.md, README.md and CHANGELOG.md describe aliases, expiry, the schema change and manual SQL, the request_hash definition and the reserved list. They correct the stale 'no authentication' statements and record the BUG-77 findings.\", \"files\": [\"docs/API.md\", \"docs/OPERATIONS.md\", \"README.md\", \"CHANGELOG.md\"]}], \"api_contract\": [{\"method\": \"POST\", \"path\": \"/api/links\", \"summary\": \"Create a short link, optionally with a custom alias and/or an expiry. Requires X-API-Key. Optional header Idempotency-Key (1-255 chars, not blank). Sets Location: /api/links/{code}. A replay sets Idempotent-Replayed: true and returns the original link's current state.\", \"request\": \"JSON LinkCreate: {\\\"url\\\": string (required, http/https absolute, <=2048, validate_target_url unchanged), \\\"alias\\\": string|null (optional; ^[A-Za-z0-9_-]{3,32}$, case preserved, stored as code), \\\"expires_at\\\": string|null (optional; ISO-8601 date-time 'YYYY-MM-DD[T ]HH:MM[:SS[.ffffff]][Z|\\u00b1HH:MM]', naive values = UTC, must be strictly later than server UTC now)}. Response body LinkCreatedResponse: {code, short_url, url, is_active, created_at (UTC 'Z'), expires_at (UTC 'Z' or null), is_expired (bool)}.\", \"responses\": {\"201\": \"Created (or idempotent replay). LinkCreatedResponse. code == alias when alias given, else a 7-char base62 generated code\", \"400\": \"Invalid Idempotency-Key header (blank or >255 chars) {\\\"detail\\\": str}\", \"401\": \"Missing/invalid X-API-Key {\\\"detail\\\": \\\"Invalid or missing API key\\\"}\", \"409\": \"Alias already in use {\\\"detail\\\": \\\"Alias already in use\\\"} (any existing code, including deactivated/expired, or a concurrent insert race), or Idempotency-Key already used with a different payload\", \"422\": \"Validation error. Schema errors give {\\\"detail\\\": [...]} (bad url, alias format/length/type, expires_at not ISO-8601/not a string). Service errors give {\\\"detail\\\": \\\"Alias is reserved\\\"} or {\\\"detail\\\": \\\"expires_at must be in the future\\\"}\", \"503\": \"Generated-code allocation exhausted or database unavailable\"}, \"fr_ids\": [\"FR-1\", \"FR-2\", \"FR-3\", \"FR-5\", \"FR-7\", \"FR-9\", \"FR-10\", \"FR-11\", \"FR-12\", \"FR-13\"]}, {\"method\": \"GET\", \"path\": \"/api/links/{code}\", \"summary\": \"Get link metadata (active, deactivated or expired). Requires X-API-Key. {code} accepts ^[A-Za-z0-9_-]{1,32}$. Anything else gives 404 without a DB lookup.\", \"request\": \"Path param code. Response LinkDetailResponse: {code, short_url, url, is_active, created_at, expires_at, is_expired, deactivated_at, total_clicks}\", \"responses\": {\"200\": \"LinkDetailResponse including expires_at (UTC 'Z' or null) and is_expired\", \"401\": \"Missing/invalid X-API-Key\", \"404\": \"Malformed or unknown code {\\\"detail\\\": \\\"Link not found\\\"}\"}, \"fr_ids\": [\"FR-4\", \"FR-6\", \"FR-7\", \"FR-12\"]}, {\"method\": \"DELETE\", \"path\": \"/api/links/{code}\", \"summary\": \"Soft-delete (deactivate) a link. Idempotent. Works for expired links and aliases containing '-'/'_'. Requires X-API-Key.\", \"request\": \"Path param code (widened lookup format)\", \"responses\": {\"204\": \"Deactivated (or already inactive), empty body\", \"401\": \"Missing/invalid X-API-Key\", \"404\": \"Malformed or unknown code\"}, \"fr_ids\": [\"FR-4\", \"FR-6\", \"FR-12\"]}, {\"method\": \"GET\", \"path\": \"/api/links/{code}/stats\", \"summary\": \"Click statistics. Works for deactivated and expired links and aliases containing '-'/'_'. Requires X-API-Key.\", \"request\": \"Path param code (widened lookup format); query days int 1..365 (default 30)\", \"responses\": {\"200\": \"LinkStatsResponse {code, total_clicks, clicks_per_day, top_referrers}\", \"401\": \"Missing/invalid X-API-Key\", \"404\": \"Malformed or unknown code\", \"422\": \"Invalid 'days' query parameter\"}, \"fr_ids\": [\"FR-4\", \"FR-6\", \"FR-12\"]}, {\"method\": \"GET\", \"path\": \"/{code}\", \"summary\": \"Public redirect (catch-all router, registered last). 307 with the exact stored URL in Location (not re-quoted) and Cache-Control: no-store. Records a click best-effort. HEAD /{code} behaves the same but records no click, and is now included in OpenAPI with the same 307/404/410 responses. 404/410 send no Location and record no click.\", \"request\": \"Path param code (widened lookup format ^[A-Za-z0-9_-]{1,32}$)\", \"responses\": {\"307\": \"Redirect to original URL (Location exact, Cache-Control: no-store)\", \"404\": \"Malformed or unknown code {\\\"detail\\\": \\\"Link not found\\\"}\", \"410\": \"Deactivated {\\\"detail\\\": \\\"Link has been deactivated\\\"} (takes precedence) or expired (expires_at <= now) {\\\"detail\\\": \\\"Link has expired\\\"}\"}, \"fr_ids\": [\"FR-4\", \"FR-6\", \"FR-12\", \"FR-13\"]}, {\"method\": \"GET\", \"path\": \"/healthz\", \"summary\": \"Liveness probe (unchanged, not shadowed by /{code})\", \"request\": \"\", \"responses\": {\"200\": \"{\\\"status\\\": \\\"ok\\\"}\"}, \"fr_ids\": [\"FR-2\", \"FR-12\"]}, {\"method\": \"GET\", \"path\": \"/readyz\", \"summary\": \"Readiness probe (unchanged, not shadowed by /{code})\", \"request\": \"\", \"responses\": {\"200\": \"{\\\"status\\\": \\\"ready\\\"}\", \"503\": \"Database is not ready\"}, \"fr_ids\": [\"FR-2\", \"FR-12\"]}], \"data_model\": [{\"name\": \"Link (table links) - MODIFIED\", \"fields\": [{\"name\": \"id\", \"type\": \"Integer\", \"constraints\": \"PK, autoincrement (unchanged)\"}, {\"name\": \"code\", \"type\": \"String(32)\", \"constraints\": \"NOT NULL, UNIQUE uq_links_code (unchanged). Holds a generated base62 code or a client alias [A-Za-z0-9_-]{3,32}, case preserved (case-sensitive on SQLite/Postgres; MySQL default collation is case-insensitive, documented caveat)\"}, {\"name\": \"url\", \"type\": \"String(2048)\", \"constraints\": \"NOT NULL (unchanged)\"}, {\"name\": \"is_active\", \"type\": \"Boolean\", \"constraints\": \"NOT NULL default true (unchanged)\"}, {\"name\": \"created_at\", \"type\": \"DateTime\", \"constraints\": \"NOT NULL default utcnow, naive UTC (unchanged)\"}, {\"name\": \"deactivated_at\", \"type\": \"DateTime\", \"constraints\": \"NULL, naive UTC (unchanged)\"}, {\"name\": \"expires_at\", \"type\": \"DateTime (generic sqlalchemy DateTime)\", \"constraints\": \"NEW. NULL, naive UTC. NULL = never expires. Expired when expires_at <= now. Added to existing DBs by ensure_schema: ALTER TABLE links ADD COLUMN expires_at DATETIME NULL (postgresql: TIMESTAMP NULL)\"}], \"indexes\": [\"uq_links_code UNIQUE(code) (unchanged)\", \"No index on expires_at (only read per loaded row)\"]}, {\"name\": \"IdempotencyKey (table idempotency_keys) - NO DDL CHANGE\", \"fields\": [{\"name\": \"id\", \"type\": \"Integer\", \"constraints\": \"PK\"}, {\"name\": \"key\", \"type\": \"String(255)\", \"constraints\": \"UNIQUE\"}, {\"name\": \"request_hash\", \"type\": \"String(64)\", \"constraints\": \"hex sha256. NEW SEMANTICS: sha256(url) when alias and expires_at are both null (same as stored legacy rows), else sha256 of canonical JSON {\\\"alias\\\",\\\"expires_at\\\" (naive-UTC 'YYYY-MM-DDTHH:MM:SS.ffffffZ' or null),\\\"url\\\"} with sort_keys and separators (',',':')\"}, {\"name\": \"link_id\", \"type\": \"Integer\", \"constraints\": \"FK links.id\"}, {\"name\": \"created_at\", \"type\": \"DateTime\", \"constraints\": \"naive UTC\"}], \"indexes\": [\"UNIQUE(key) (unchanged)\"]}], \"decisions\": [{\"id\": \"ADR-1\", \"title\": \"Alias format in schema, reserved words in service with codes.RESERVED_CODES\", \"decision\": \"LinkCreate validates alias type, length and charset (StrictStr, 3-32, [A-Za-z0-9_-]), giving a FastAPI 422 list detail. LinkService rejects reserved aliases case-insensitively via codes.is_reserved, raising UnprocessableEntityError('Alias is reserved'), which gives 422. 'metrics' is added to codes.RESERVED_CODES, so generated codes and aliases share one list.\", \"rationale\": \"Schemas may not import app.* (architecture test), so the reserved list cannot be checked there without duplicating it. Keeping it in the service gives one source of truth (NFR-5, R6). The format check in the schema documents the pattern in OpenAPI.\", \"alternatives\": [\"Duplicate the reserved list in schemas plus an equality test\", \"Do all alias validation in the service (loses the OpenAPI pattern and the list-style 422)\"]}, {\"id\": \"ADR-2\", \"title\": \"Separate lookup validator instead of widening CODE_PATTERN\", \"decision\": \"Add codes.is_valid_lookup_code (^[A-Za-z0-9_-]{1,32}$) and use it in LinkService._get_or_404 and StatsService.get_stats. is_valid_code_format stays base62-only.\", \"rationale\": \"tests/test_codes.py asserts is_valid_code_format('abc-123') is False (R3). Lookups must accept aliases with '-'/'_'. Malformed codes still get 404 without a query. '-'/'_' codes that do not exist are now valid-but-unknown, which is still 404.\", \"alternatives\": [\"Widen CODE_PATTERN (breaks existing tests)\", \"Skip the format check on lookup (extra DB queries for garbage paths)\"]}, {\"id\": \"ADR-3\", \"title\": \"Alias path is a single insert, and IntegrityError gives 409\", \"decision\": \"If alias is given: pre-check get_by_code (friendly 409), then one LinkRepository.add. On IntegrityError: rollback. If an Idempotency-Key was sent and its record now exists, replay it or return 409. Otherwise raise ConflictError('Alias already in use'). codes.generate_code is never called on this path. The generated-code retry loop is unchanged.\", \"rationale\": \"Under a uniqueness race exactly one request wins and the rest get 409, never a random code or 503 (FR-3, NFR-4, R4). The unique constraint uq_links_code is the real guarantee.\", \"alternatives\": [\"Reuse the retry loop (wrong status)\", \"Rely only on the pre-check (racy)\"]}, {\"id\": \"ADR-4\", \"title\": \"Idempotent startup migration with literal DDL in core/db.ensure_schema\", \"decision\": \"After create_all, ensure_schema(engine) inspects links. If expires_at is missing, it executes text('ALTER TABLE links ADD COLUMN expires_at DATETIME NULL'). On the postgresql dialect only, it executes text('ALTER TABLE links ADD COLUMN expires_at TIMESTAMP NULL'), because PostgreSQL has no DATETIME type. Both are literal strings passed straight to text(). If the ALTER fails with DBAPIError and the column now exists, this is a tolerated concurrent race. Otherwise it logs an error and re-raises. The manual SQL is documented. No Alembic.\", \"rationale\": \"create_all never alters tables (R1). Literal text() keeps the static test green. SQLite and MySQL get exactly the DDL in the requirement. The postgresql branch is a deliberate, called-out deviation so that pre-CR-142 Postgres databases actually migrate: DATETIME would fail there with 'type does not exist'. TIMESTAMP is what SQLAlchemy DateTime creates on Postgres anyway. TIMESTAMP is not used everywhere because on MySQL it means TZ conversion and a 2038 limit.\", \"alternatives\": [\"Alembic (out of scope, new dependency)\", \"Manual SQL only (deploys break until a DBA acts)\", \"Single DATETIME literal for all dialects (broken on PostgreSQL)\", \"Compile the type via the dialect and format it into SQL (string-built SQL is forbidden)\"]}, {\"id\": \"ADR-5\", \"title\": \"expires_at: ISO-only parsing in schema, future check in service with an injectable clock\", \"decision\": \"LinkCreate.expires_at: dt.datetime|None with a mode='before' validator that accepts only None, datetime instances, or str matching a strict ISO-8601 date-time regex (rejects int/bool/''/'tomorrow'/date-only/unix strings). Pydantic then parses it (rejecting month 13), and a mode='after' validator normalises it with _as_utc (naive = UTC). LinkService converts to naive UTC and requires expires_at > self.now(). Otherwise it raises UnprocessableEntityError('expires_at must be in the future'). The clock is LinkService(clock=...), which deps fill from app.state.clock (None means models.utcnow, looked up at call time).\", \"rationale\": \"Pydantic lax mode accepts numbers and numeric strings as unix time (R9). Strict mode rejects JSON strings under FastAPI's python validation. The schema cannot reach an injectable clock, but the service can, which allows the 'equal to now gives 422' test (R5).\", \"alternatives\": [\"Pydantic strict datetime\", \"AwareDatetime (rejects naive input, contradicting Q-4)\", \"Future check inside the schema using datetime.now (not controllable in tests)\"]}, {\"id\": \"ADR-6\", \"title\": \"Backwards-compatible idempotency request_hash\", \"decision\": \"compute_request_hash(url, alias, expires_at_naive_utc) returns sha256(url) when alias and expires_at are both None. Otherwise it returns sha256 of json.dumps({'alias':..., 'expires_at': 'YYYY-MM-DDTHH:MM:SS.ffffffZ' or None, 'url':...}, sort_keys=True, separators=(',',':'), ensure_ascii=False). The idempotency lookup runs before the reserved/future checks, so a retried successful request always replays.\", \"rationale\": \"Stored keys keep replaying (R2). Equal instants in different offsets hash the same. Different alias or expiry gives 409. Failed attempts store no record because the record is only added in the same transaction as a successful link insert.\", \"alternatives\": [\"Always hash the new canonical payload (breaks legacy keys)\", \"Store payload columns (DDL change)\"]}, {\"id\": \"ADR-7\", \"title\": \"Expiry evaluated from the loaded row; deactivation takes precedence\", \"decision\": \"Link.is_expired_at(now) returns expires_at is not None and expires_at <= now. Redirect and HEAD check `not is_active` first (GoneError, 'Link has been deactivated'), then expiry (LinkExpiredError, 'Link has expired'), before any click insert. is_expired for responses is computed by the service and returned in CreateResult/LinkDetail. is_active is not changed by expiry.\", \"rationale\": \"No extra query (NFR-1). Keeps the existing deactivated 410 unchanged (FR-6, Q-3). One clock source for both redirect and metadata.\", \"alternatives\": [\"SQL filter on expires_at (extra query or query change)\", \"Expiry takes precedence over deactivation\"]}, {\"id\": \"ADR-8\", \"title\": \"Expose HEAD /{code} in OpenAPI\", \"decision\": \"Change @router.head('/{code}') to include_in_schema=True with responses 307/404/410, so FR-13's 410 documentation covers HEAD.\", \"rationale\": \"FR-13 requires HEAD to list 410. Behaviour is unchanged. Existing OpenAPI tests only assert the presence of paths and schemas.\", \"alternatives\": [\"Keep HEAD hidden (fails FR-13)\"]}], \"risks\": [{\"id\": \"R1\", \"description\": \"Legacy databases lack links.expires_at. Without migration every links query gives 503.\", \"likelihood\": \"high\", \"impact\": \"high\", \"mitigation\": \"ensure_schema runs on every startup after create_all. Legacy-DB boot test run twice (NFR-3). Manual SQL and 'migrate once before multi-instance rollout' in OPERATIONS.md.\"}, {\"id\": \"R2\", \"description\": \"A request_hash change breaks replay of stored keys.\", \"likelihood\": \"medium\", \"impact\": \"medium\", \"mitigation\": \"Keep sha256(url) when there are no new fields (ADR-6). Test with a directly inserted legacy row.\"}, {\"id\": \"R3\", \"description\": \"Postgres rejects DATETIME, so the required literal DDL alone would break legacy Postgres DBs.\", \"likelihood\": \"medium\", \"impact\": \"high\", \"mitigation\": \"Literal TIMESTAMP branch for the postgresql dialect only (ADR-4). Documented in OPERATIONS.md with per-dialect manual SQL.\"}, {\"id\": \"R4\", \"description\": \"Alias race mapped to a retry or 503 instead of 409.\", \"likelihood\": \"medium\", \"impact\": \"medium\", \"mitigation\": \"Separate alias branch (ADR-3). Monkeypatched IntegrityError test asserts 409, rollback, zero extra rows, and that generate_code is not called.\"}, {\"id\": \"R5\", \"description\": \"Naive/aware datetime mixing causes a TypeError (500) or shifted expiry.\", \"likelihood\": \"medium\", \"impact\": \"medium\", \"mitigation\": \"Schema normalises to aware UTC. The service converts to naive UTC before compare/persist. now() normalises any aware injected clock. Offset and naive tests.\"}, {\"id\": \"R6\", \"description\": \"Lax parsing accepts numeric expires_at.\", \"likelihood\": \"medium\", \"impact\": \"low\", \"mitigation\": \"Before-validator ISO regex (ADR-5). Tests for 1893456000, true, '', 'tomorrow', month 13.\"}, {\"id\": \"R7\", \"description\": \"MySQL case-insensitive collation makes 'MyLink'/'mylink' collide and lookups case-insensitive.\", \"likelihood\": \"low\", \"impact\": \"low\", \"mitigation\": \"Documented caveat. Binary collation deferred. Tests use SQLite.\"}, {\"id\": \"R8\", \"description\": \"Pydantic constraint handling on Optional StrictStr could let bad aliases through.\", \"likelihood\": \"low\", \"impact\": \"medium\", \"mitigation\": \"Belt and braces: an after-validator re.fullmatch(r'[A-Za-z0-9_-]{3,32}') plus a defensive codes.is_valid_alias check in the service (422). Tests cover every listed bad input.\"}, {\"id\": \"R9\", \"description\": \"Computed is_expired makes replay bodies change over time.\", \"likelihood\": \"low\", \"impact\": \"low\", \"mitigation\": \"Documented: replays reflect current state, as is_active already does. Computed from the loaded row.\"}, {\"id\": \"R10\", \"description\": \"Widened lookup format changes behaviour for existing malformed-code tests ('abc-def', 'abc_def').\", \"likelihood\": \"low\", \"impact\": \"low\", \"mitigation\": \"These become valid-but-unknown and still return 404, which the existing assertions accept (404/422 and 404 respectively).\"}], \"work_packages\": [{\"id\": \"WP-1\", \"title\": \"Domain primitives: 422/expired errors and code rules\", \"description\": \"app/core/errors.py (additive only; existing classes, handlers and register_exception_handlers unchanged):\\n- Add `LINK_EXPIRED_DETAIL = \\\"Link has expired\\\"`.\\n- Add `class UnprocessableEntityError(AppError): status_code = 422; default_detail = \\\"Unprocessable entity\\\"`.\\n- Add `class LinkExpiredError(GoneError): default_detail = LINK_EXPIRED_DETAIL` (status 410 inherited). GoneError.default_detail stays \\\"Link has been deactivated\\\".\\n- The existing _app_error_handler already renders {\\\"detail\\\": str}. Do not import services, repositories or api (architecture test).\\n\\napp/services/codes.py:\\n- RESERVED_CODES = frozenset of the existing 8 entries plus \\\"metrics\\\": {healthz, readyz, api, docs, redoc, openapi.json, static, favicon.ico, metrics}, all lower-case.\\n- Keep generate_code, is_reserved (casefold), CODE_PATTERN and is_valid_code_format EXACTLY as they are (base62 only; 'abc-123' must stay invalid). Keep `import secrets`; never import random.\\n- Add `ALIAS_MIN_LENGTH = 3`, `ALIAS_MAX_LENGTH = 32`, `ALIAS_PATTERN = re.compile(r\\\"^[A-Za-z0-9_-]{3,32}$\\\")`, `LOOKUP_CODE_PATTERN = re.compile(r\\\"^[A-Za-z0-9_-]{1,32}$\\\")`.\\n- Add `def is_valid_alias(alias: str) -> bool` returning bool(ALIAS_PATTERN.fullmatch(alias)), and `def is_valid_lookup_code(code: str) -> bool` returning bool(LOOKUP_CODE_PATTERN.fullmatch(code)). Use fullmatch so a trailing newline never matches. Character classes are explicit ASCII ranges (no \\\\w). Add docstrings.\", \"files\": [\"app/core/errors.py\", \"app/services/codes.py\"], \"depends_on\": [], \"fr_ids\": [\"FR-2\", \"FR-4\", \"FR-6\", \"FR-10\"], \"risk\": \"low\"}, {\"id\": \"WP-2\", \"title\": \"Schema change: Link.expires_at and idempotent startup migration\", \"description\": \"app/models/link.py:\\n- Add `expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)` after deactivated_at (generic sqlalchemy DateTime only; no dialect imports; naive UTC).\\n- Add method `def is_expired_at(self, now: datetime) -> bool` returning `self.expires_at is not None and self.expires_at <= now`. Both values are naive UTC. Import nothing from outside app.models.\\n\\napp/core/db.py (keep create_db_engine, create_session_factory and get_db unchanged):\\n- Imports: logging; `from sqlalchemy import inspect, text`; `from sqlalchemy.exc import DBAPIError`. logger = logging.getLogger(\\\"app.migrations\\\").\\n- `def _links_columns(engine: Engine) -> set[str]`: return {c['name'] for c in inspect(engine).get_columns('links')}, using a fresh inspector on every call. This is the test seam.\\n- `def ensure_schema(engine: Engine) -> bool`: (1) if not inspect(engine).has_table('links'): logger.debug(...); return False. (2) if 'expires_at' in _links_columns(engine): logger.debug('schema up to date'); return False. (3) Otherwise, inside `with engine.begin() as conn:`, if engine.dialect.name == 'postgresql' run `conn.execute(text(\\\"ALTER TABLE links ADD COLUMN expires_at TIMESTAMP NULL\\\"))`, else run `conn.execute(text(\\\"ALTER TABLE links ADD COLUMN expires_at DATETIME NULL\\\"))`. Each text() call MUST receive the string literal directly (no variables, no formatting) for test_sql_text_only_receives_literal_strings. (4) Wrap step 3 in `except DBAPIError:`. If 'expires_at' in _links_columns(engine) (concurrent instance won), logger.info('links.expires_at already added by another instance') and return False. Else logger.error('schema migration failed: could not add links.expires_at') and `raise`; never swallow. (5) On success, logger.info('schema migration applied: added column links.expires_at') (exactly one INFO line, no PII) and return True. Docstring documents idempotency and the manual SQL.\\n\\napp/main.py:\\n- Import ensure_schema from app.core.db. In lifespan: `Base.metadata.create_all(bind=engine)` then `ensure_schema(engine)`, then yield and engine.dispose() as before.\\n- After setting app.state.session_factory add `app.state.clock = None` (test hook: optional callable returning the current datetime, read by api.deps.get_link_service).\\n- Router order unchanged (health, links, redirect last). Module-level app = create_app() unchanged.\", \"files\": [\"app/models/link.py\", \"app/core/db.py\", \"app/main.py\"], \"depends_on\": [], \"fr_ids\": [\"FR-8\", \"FR-5\", \"FR-6\", \"FR-12\"], \"risk\": \"medium\"}, {\"id\": \"WP-3\", \"title\": \"Request/response schemas: alias, expires_at, is_expired\", \"description\": \"app/schemas/links.py. Must import nothing from app.* (architecture test). validate_target_url, _is_forbidden_char, _as_utc and the module doctest stay byte-for-byte unchanged (BUG-77: no behaviour change). Model class names stay unchanged.\\n- Add `import re` and `Field` from pydantic. Constants: `ALIAS_REGEX = r\\\"^[A-Za-z0-9_-]+$\\\"`, `ALIAS_MIN_LENGTH = 3`, `ALIAS_MAX_LENGTH = 32`, `_ALIAS_FULL_RE = re.compile(r\\\"[A-Za-z0-9_-]{3,32}\\\")`, `_ISO_DATETIME_RE = re.compile(r\\\"\\\\d{4}-\\\\d{2}-\\\\d{2}[Tt ]\\\\d{2}:\\\\d{2}(:\\\\d{2}(\\\\.\\\\d{1,6})?)?([Zz]|[+-]\\\\d{2}:\\\\d{2})?\\\")` (use fullmatch). Note in a comment that the alias rule mirrors app.services.codes.ALIAS_PATTERN.\\n- LinkCreate: keep `url: StrictStr` and its validator. Add `alias: StrictStr | None = Field(default=None, min_length=3, max_length=32, pattern=ALIAS_REGEX, description=\\\"Custom short code (3-32 chars of A-Z a-z 0-9 _ -), case preserved; reserved words are rejected\\\")` and `expires_at: dt.datetime | None = Field(default=None, description=\\\"Optional expiry, ISO-8601 date-time; naive values are UTC; must be in the future\\\")`.\\n- @field_validator('alias', mode='after'): if v is not None and not _ALIAS_FULL_RE.fullmatch(v), raise ValueError('alias must be 3-32 characters of A-Z, a-z, 0-9, _ or -'). Return v unchanged (no case change).\\n- @field_validator('expires_at', mode='before'): return value if it is None or isinstance(value, dt.datetime). If not isinstance(value, str) (int, float, bool, list, ...) or not _ISO_DATETIME_RE.fullmatch(value), raise ValueError('expires_at must be an ISO-8601 date-time string'). Otherwise return the string (Pydantic parses it and rejects invalid dates such as month 13).\\n- @field_validator('expires_at', mode='after'): return _as_utc(v) (aware UTC; naive treated as UTC). Do NOT check 'in the future' here; the service does that with an injectable clock.\\n- Update json_schema_extra examples to [{\\\"url\\\": \\\"https://example.com/a?b=1\\\"}, {\\\"url\\\": \\\"https://example.com/a?b=1\\\", \\\"alias\\\": \\\"my-link_1\\\", \\\"expires_at\\\": \\\"2030-01-01T12:00:00Z\\\"}].\\n- LinkCreatedResponse: add `expires_at: dt.datetime | None = None` and `is_expired: bool` (required) after created_at, plus @field_validator('expires_at', mode='after') returning _as_utc(v), so it serialises as UTC with 'Z'. LinkDetailResponse inherits both and is otherwise unchanged. No other model changes.\", \"files\": [\"app/schemas/links.py\"], \"depends_on\": [], \"fr_ids\": [\"FR-1\", \"FR-5\", \"FR-7\", \"FR-11\", \"FR-12\"], \"risk\": \"low\"}, {\"id\": \"WP-4\", \"title\": \"Service rules: alias create path, expiry, idempotency hash, widened lookup\", \"description\": \"app/services/link_service.py (no fastapi/starlette/app.api imports):\\n- Imports: json, Callable from collections.abc, UTC and datetime from datetime, UnprocessableEntityError and LinkExpiredError from app.core.errors.\\n- Constants: ALIAS_TAKEN_DETAIL = \\\"Alias already in use\\\"; ALIAS_RESERVED_DETAIL = \\\"Alias is reserved\\\"; ALIAS_INVALID_DETAIL = \\\"Invalid alias\\\"; EXPIRES_NOT_FUTURE_DETAIL = \\\"expires_at must be in the future\\\".\\n- Dataclasses: CreateResult(link, replayed, is_expired: bool = False); LinkDetail(link, total_clicks, is_expired: bool = False).\\n- Module functions: `_to_naive_utc(value: datetime | None) -> datetime | None` (aware: astimezone(UTC).replace(tzinfo=None); naive: unchanged). `compute_request_hash(url: str, alias: str | None, expires_at: datetime | None) -> str`: if alias is None and expires_at is None, return hashlib.sha256(url.encode('utf-8')).hexdigest() (legacy-compatible). Otherwise exp = _to_naive_utc(expires_at), payload = json.dumps({'alias': alias, 'expires_at': exp.strftime('%Y-%m-%dT%H:%M:%S.%fZ') if exp else None, 'url': url}, sort_keys=True, separators=(',', ':'), ensure_ascii=False), and return sha256(payload.encode('utf-8')).hexdigest().\\n- LinkService.__init__ adds keyword `clock: Callable[[], datetime] | None = None` (stored as self._clock). `def now(self) -> datetime`: value = self._clock() if set, else utcnow() (module global resolved at call time so tests can monkeypatch app.services.link_service.utcnow). If value is aware, convert to naive UTC. Return naive UTC.\\n- `create_link(self, url, idempotency_key=None, *, alias: str | None = None, exp"
+        }
+      },
+      "diff": null,
+      "gates": [
+        {
+          "name": "unique_work_packages",
+          "passed": true,
+          "detail": "ids: ['WP-1', 'WP-2', 'WP-3', 'WP-4', 'WP-5', 'WP-6']",
+          "severity": "block"
+        },
+        {
+          "name": "dependencies_resolve",
+          "passed": true,
+          "detail": "ok",
+          "severity": "block"
+        },
+        {
+          "name": "work_packages_acyclic",
+          "passed": true,
+          "detail": "ok",
+          "severity": "block"
+        },
+        {
+          "name": "disjoint_file_ownership",
+          "passed": true,
+          "detail": "ok",
+          "severity": "block"
+        },
+        {
+          "name": "explicit_file_paths",
+          "passed": true,
+          "detail": "ok",
+          "severity": "block"
+        },
+        {
+          "name": "tests_owned_by_test_agent",
+          "passed": true,
+          "detail": "ok",
+          "severity": "block"
+        },
+        {
+          "name": "paths_allowed",
+          "passed": true,
+          "detail": "ok",
+          "severity": "block"
+        },
+        {
+          "name": "must_requirements_traced",
+          "passed": true,
+          "detail": "ok",
+          "severity": "block"
+        }
+      ],
+      "attempt": 3,
+      "metrics": {
+        "agent_turns": 10,
+        "tool_calls": 29,
+        "denied_calls": 0,
+        "model": "claude-opus-5-5",
+        "cost_usd": 1.3441,
+        "transcript": "/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.sdlc/runs/run_2e7440e535cd/transcripts/design-a3.jsonl",
+        "files_written": []
+      }
+    },
+    "subject_hash": "7fa430ba69fc52ec",
+    "status": "approved",
+    "requested_at": 1792116463.054114,
+    "decided_at": 1792116463.0585148,
+    "decided_by": "policy:auto-approve",
+    "comment": "auto-approved: kind is auto-approvable under policy.autonomy",
+    "response": {}
+  },
+  {
+    "id": "apr_c28d3dd2f913",
+    "run_id": "run_2e7440e535cd",
+    "node_id": "impl:WP-4",
+    "kind": "change",
+    "summary": "Service rules: alias create path, expiry, idempotency hash, widened lookup",
+    "payload": {
+      "outputs_preview": {
+        "impl_report:WP-4": {
+          "summary": "I implemented WP-4. The link service now supports custom aliases and link expiry, and the idempotency hash covers both new fields. Code lookups everywhere, including stats, accept '-' and '_'. `compileall` and ruff pass, and all 165 existing tests still pass. No new tests were written for the new behaviour; that is left to the test agent.\n\n**`app/services/link_service.py`**\n- **New pieces:** the four detail constants (\"Alias already in use\", \"Alias is reserved\", \"Invalid alias\", \"expires_at must be in the future\"). `CreateResult` and `LinkDetail` now carry an `is_expired` field (default False). Two module functions were added: `_to_naive_utc` and `compute_request_hash`.\n- **Idempotency hash:** a url-only request still hashes as `sha256(url)`, so keys stored before this change keep replaying. Otherwise it hashes a canonical JSON of url, alias and the expiry in UTC, so the same instant written in different offsets gives the same hash.\n- **Clock:** `LinkService` takes an optional `clock` argument. `now()` uses it if set, otherwise the module-level `utcnow` (looked up at call time, so tests can monkeypatch it), and always returns naive UTC.\n- **Creation order:** check the Idempotency-Key (400) \u2192 normalise `expires_at` and compute the hash \u2192 replay an existing key or return 409 \u2192 reject a malformed alias (422 'Invalid alias') or a reserved one (422 'Alias is reserved') \u2192 reject an `expires_at` at or before now (422).\n- **Alias path:** checks whether the code is taken (409), then does a single insert. If the insert hits the uniqueness constraint, it rolls back; if a concurrent request with the same Idempotency-Key won, that result is replayed, otherwise it returns 409 'Alias already in use'. It never calls `codes.generate_code`.\n- **Generated-code path:** the existing retry loop is unchanged apart from storing `expires_at`.\n- **Both paths** finish through a shared `_finish_create`, so an idempotency row is only committed together with a successful link.\n- **Lookup and redirect:** lookups use `codes.is_valid_lookup_code`; malformed codes still return 404 without a database query. GET and HEAD redirects check deactivation first (410 'Link has been deactivated'), then expiry (410 'Link has expired'), before any click is recorded and with no extra query. Metadata responses and replays report `is_expired` using the same clock. Deactivating a link works as before.\n\n**`app/services/stats_service.py`:** `get_stats` uses `codes.is_valid_lookup_code`, and I updated its docstring to mention expired links.",
+          "files_changed": [
+            "app/services/link_service.py",
+            "app/services/stats_service.py"
+          ],
+          "notes": [
+            "Small deviation from the spec: `_finish_create` works out `is_expired` just before the commit rather than after. The value is the same, and it avoids reloading the link from the database right after the commit.",
+            "I moved the alias insert into a private `_create_with_alias`, and redirect and HEAD now share a private `_get_redirectable` for the not-found / deactivated / expired checks. Behaviour and order are exactly as specified.",
+            "Alias and `expires_at` values are never logged."
+          ],
+          "open_issues": [
+            "WP-5 still has to wire up the HTTP layer. `app/api/deps.get_link_service` must pass `clock=getattr(request.app.state, 'clock', None)` to `LinkService`; until then a clock set on `app.state.clock` in tests has no effect, though monkeypatching `app.services.link_service.utcnow` still works.",
+            "Also for WP-5: `app/api/links.py` must call `create_link(payload.url, idempotency_key, alias=payload.alias, expires_at=payload.expires_at)` and fill in `is_expired` from `result.is_expired` and `detail.is_expired`.",
+            "Tests for the new behaviour (aliases, expiry, the idempotency hash, the alias insert race) are still owed by the test agent."
+          ]
+        }
+      },
+      "diff": "diff --git a/app/services/link_service.py b/app/services/link_service.py\nindex 6c35a5c..b38bb97 100644\n--- a/app/services/link_service.py\n+++ b/app/services/link_service.py\n@@ -2,14 +2,21 @@\n \n The service owns transaction boundaries: repositories only flush, and this module\n alone calls ``commit()``/``rollback()``.\n+\n+Creation has two paths. With a client-chosen ``alias`` the link is inserted exactly\n+once and a uniqueness violation maps to 409; without one, a random base62 code is\n+generated with a bounded retry loop. Alias and ``expires_at`` values are never logged.\n \"\"\"\n \n from __future__ import annotations\n \n import hashlib\n import hmac\n+import json\n import logging\n+from collections.abc import Callable\n from dataclasses import dataclass\n+from datetime import UTC, datetime\n \n from sqlalchemy.exc import IntegrityError\n from sqlalchemy.orm import Session\n@@ -18,8 +25,10 @@ from app.core.errors import (\n     BadRequestError,\n     ConflictError,\n     GoneError,\n+    LinkExpiredError,\n     NotFoundError,\n     ServiceUnavailableError,\n+    UnprocessableEntityError,\n )\n from app.models import ClickEvent, IdempotencyKey, Link, utcnow\n from app.repositories import ClickRepository, IdempotencyRepository, LinkRepository\n@@ -31,21 +40,32 @@ MAX_REFERRER_LEN = 2048\n MAX_USER_AGENT_LEN = 512\n MAX_IDEMPOTENCY_KEY_LEN = 255\n \n+ALIAS_TAKEN_DETAIL = \"Alias already in use\"\n+ALIAS_RESERVED_DETAIL = \"Alias is reserved\"\n+ALIAS_INVALID_DETAIL = \"Invalid alias\"\n+EXPIRES_NOT_FUTURE_DETAIL = \"expires_at must be in the future\"\n+\n \n @dataclass\n class CreateResult:\n-    \"\"\"Outcome of ``create_link``; ``replayed`` is True for an idempotent replay.\"\"\"\n+    \"\"\"Outcome of ``create_link``.\n+\n+    ``replayed`` is True for an idempotent replay; ``is_expired`` reflects the link's\n+    expiry state at the time the result was produced.\n+    \"\"\"\n \n     link: Link\n     replayed: bool\n+    is_expired: bool = False\n \n \n @dataclass\n class LinkDetail:\n-    \"\"\"A link (active or not) together with its all-time click count.\"\"\"\n+    \"\"\"A link (active, deactivated or expired) with its all-time click count.\"\"\"\n \n     link: Link\n     total_clicks: int\n+    is_expired: bool = False\n \n \n def hash_ip(ip: str | None, salt: str | None) -> str | None:\n@@ -55,6 +75,37 @@ def hash_ip(ip: str | None, salt: str | None) -> str | None:\n     return hmac.new(salt.encode(), ip.encode(), hashlib.sha256).hexdigest()\n \n \n+def _to_naive_utc(value: datetime | None) -> datetime | None:\n+    \"\"\"Convert an aware datetime to naive UTC; naive values (already UTC) pass through.\"\"\"\n+    if value is None or value.tzinfo is None:\n+        return value\n+    return value.astimezone(UTC).replace(tzinfo=None)\n+\n+\n+def compute_request_hash(url: str, alias: str | None, expires_at: datetime | None) -> str:\n+    \"\"\"Return the idempotency fingerprint of a creation payload (hex SHA-256).\n+\n+    When neither ``alias`` nor ``expires_at`` is given the hash is ``sha256(url)``, which\n+    is what was stored before CR-142, so existing keys keep replaying. Otherwise it is\n+    the SHA-256 of a canonical JSON document of url, alias and the UTC-normalised expiry,\n+    so equal instants expressed in different offsets produce the same hash.\n+    \"\"\"\n+    if alias is None and expires_at is None:\n+        return hashlib.sha256(url.encode(\"utf-8\")).hexdigest()\n+    exp = _to_naive_utc(expires_at)\n+    payload = json.dumps(\n+        {\n+            \"alias\": alias,\n+            \"expires_at\": exp.strftime(\"%Y-%m-%dT%H:%M:%S.%fZ\") if exp else None,\n+            \"url\": url,\n+        },\n+        sort_keys=True,\n+        separators=(\",\", \":\"),\n+        ensure_ascii=False,\n+    )\n+    return hashlib.sha256(payload.encode(\"utf-8\")).hexdigest()\n+\n+\n class LinkService:\n     \"\"\"Business operations on short links, bound to one database session.\"\"\"\n \n@@ -65,64 +116,139 @@ class LinkService:\n         code_length: int = 7,\n         max_attempts: int = 5,\n         ip_hash_salt: str | None = None,\n+        clock: Callable[[], datetime] | None = None,\n     ) -> None:\n         self.session = session\n         self.code_length = code_length\n         self.max_attempts = max_attempts\n         self.ip_hash_salt = ip_hash_salt\n+        self._clock = clock\n         self.link_repo = LinkRepository(session)\n         self.click_repo = ClickRepository(session)\n         self.idem_repo = IdempotencyRepository(session)\n \n-    def create_link(self, url: str, idempotency_key: str | None = None) -> CreateResult:\n+    def now(self) -> datetime:\n+        \"\"\"Return the current time as naive UTC, from the injected clock if one is set.\"\"\"\n+        value = self._clock() if self._clock is not None else utcnow()\n+        if value.tzinfo is not None:\n+            value = value.astimezone(UTC).replace(tzinfo=None)\n+        return value\n+\n+    def create_link(\n+        self,\n+        url: str,\n+        idempotency_key: str | None = None,\n+        *,\n+        alias: str | None = None,\n+        expires_at: datetime | None = None,\n+    ) -> CreateResult:\n         \"\"\"Create a new active link, honouring an optional Idempotency-Key.\n \n+        With ``alias`` the link is stored with ``code == alias`` (case preserved) in a\n+        single insert; otherwise a random code is generated. ``expires_at`` (aware or\n+        naive UTC) is persisted as naive UTC and must lie strictly in the future.\n+\n         Raises:\n             BadRequestError: the key is blank or longer than 255 characters.\n-            ConflictError: the key was already used with a different URL.\n-            ServiceUnavailableError: no unique code could be allocated.\n+            ConflictError: the key was already used with a different payload, or the\n+                alias is already taken (including by a concurrent request).\n+            UnprocessableEntityError: the alias is malformed or reserved, or\n+                ``expires_at`` is not in the future.\n+            ServiceUnavailableError: no unique generated code could be allocated.\n         \"\"\"\n         key = idempotency_key\n         if key is not None and (key.strip() == \"\" or len(key) > MAX_IDEMPOTENCY_KEY_LEN):\n             raise BadRequestError(\"Invalid Idempotency-Key header\")\n \n-        request_hash = hashlib.sha256(url.encode(\"utf-8\")).hexdigest()\n+        exp = _to_naive_utc(expires_at)\n+        request_hash = compute_request_hash(url, alias, exp)\n \n         if key is not None:\n             existing = self.idem_repo.get_by_key(key)\n             if existing is not None:\n                 return self._replay_or_conflict(existing, request_hash)\n \n+        if alias is not None:\n+            if not codes.is_valid_alias(alias):\n+                raise UnprocessableEntityError(ALIAS_INVALID_DETAIL)\n+            if codes.is_reserved(alias):\n+                raise UnprocessableEntityError(ALIAS_RESERVED_DETAIL)\n+\n+        if exp is not None and exp <= self.now():\n+            raise UnprocessableEntityError(EXPIRES_NOT_FUTURE_DETAIL)\n+\n+        if alias is not None:\n+            return self._create_with_alias(url, alias, exp, key, request_hash)\n+\n         for _attempt in range(self.max_attempts):\n             code = codes.generate_code(self.code_length)\n             if codes.is_reserved(code):\n                 continue\n \n-            link = Link(code=code, url=url, is_active=True)\n+            link = Link(code=code, url=url, is_active=True, expires_at=exp)\n             try:\n                 self.link_repo.add(link)\n             except IntegrityError:\n                 self.session.rollback()\n                 continue\n \n-            if key is not None:\n-                try:\n-                    self.idem_repo.add(\n-                        IdempotencyKey(key=key, request_hash=request_hash, link_id=link.id)\n-                    )\n-                except IntegrityError:\n-                    self.session.rollback()\n-                    winner = self.idem_repo.get_by_key(key)\n-                    if winner is None:\n-                        raise ConflictError(\"Idempotency-Key conflict, please retry\") from None\n-                    return self._replay_or_conflict(winner, request_hash)\n-\n-            self.session.commit()\n-            return CreateResult(link=link, replayed=False)\n+            return self._finish_create(link, key, request_hash)\n \n         logger.error(\"short code allocation exhausted\")\n         raise ServiceUnavailableError(\"Could not allocate a unique short code, please retry\")\n \n+    def _create_with_alias(\n+        self,\n+        url: str,\n+        alias: str,\n+        exp: datetime | None,\n+        key: str | None,\n+        request_hash: str,\n+    ) -> CreateResult:\n+        \"\"\"Insert a link whose code is ``alias``; any uniqueness violation is a 409.\n+\n+        Never generates a random code. If a concurrent request with the same\n+        Idempotency-Key won the race, its result is replayed (or 409 on a payload\n+        mismatch).\n+        \"\"\"\n+        if self.link_repo.get_by_code(alias) is not None:\n+            raise ConflictError(ALIAS_TAKEN_DETAIL)\n+\n+        link = Link(code=alias, url=url, is_active=True, expires_at=exp)\n+        try:\n+            self.link_repo.add(link)\n+        except IntegrityError:\n+            self.session.rollback()\n+            if key is not None and (winner := self.idem_repo.get_by_key(key)) is not None:\n+                return self._replay_or_conflict(winner, request_hash)\n+            raise ConflictError(ALIAS_TAKEN_DETAIL) from None\n+\n+        return self._finish_create(link, key, request_hash)\n+\n+    def _finish_create(\n+        self, link: Link, key: str | None, request_hash: str\n+    ) -> CreateResult:\n+        \"\"\"Record the Idempotency-Key (if any) for the flushed ``link`` and commit.\n+\n+        The key row is only ever committed together with the link, so a failed attempt\n+        never leaves an idempotency record behind.\n+        \"\"\"\n+        if key is not None:\n+            try:\n+                self.idem_repo.add(\n+                    IdempotencyKey(key=key, request_hash=request_hash, link_id=link.id)\n+                )\n+            except IntegrityError:\n+                self.session.rollback()\n+                winner = self.idem_repo.get_by_key(key)\n+                if winner is None:\n+                    raise ConflictError(\"Idempotency-Key conflict, please retry\") from None\n+                return self._replay_or_conflict(winner, request_hash)\n+\n+        is_expired = link.is_expired_at(self.now())\n+        self.session.commit()\n+        return CreateResult(link=link, replayed=False, is_expired=is_expired)\n+\n     def _replay_or_conflict(self, record: IdempotencyKey, request_hash: str) -> CreateResult:\n         \"\"\"Replay the link stored for ``record`` or raise if the payload differs.\"\"\"\n         if record.request_hash != request_hash:\n@@ -130,11 +256,11 @@ class LinkService:\n         link = self.session.get(Link, record.link_id)\n         if link is None:\n             raise ConflictError(\"Idempotency-Key conflict, please retry\")\n-        return CreateResult(link=link, replayed=True)\n+        return CreateResult(link=link, replayed=True, is_expired=link.is_expired_at(self.now()))\n \n     def _get_or_404(self, code: str) -> Link:\n         \"\"\"Return the link for ``code`` or raise ``NotFoundError`` (malformed codes never query).\"\"\"\n-        if not codes.is_valid_code_format(code):\n+        if not codes.is_valid_lookup_code(code):\n             raise NotFoundError()\n         link = self.link_repo.get_by_code(code)\n         if link is None:\n@@ -142,9 +268,13 @@ class LinkService:\n         return link\n \n     def get_link_detail(self, code: str) -> LinkDetail:\n-        \"\"\"Return a link (active or deactivated) and its all-time click count.\"\"\"\n+        \"\"\"Return a link (active, deactivated or expired), its click count and expiry state.\"\"\"\n         link = self._get_or_404(code)\n-        return LinkDetail(link=link, total_clicks=self.click_repo.count_for_link(link.id))\n+        return LinkDetail(\n+            link=link,\n+            total_clicks=self.click_repo.count_for_link(link.id),\n+            is_expired=link.is_expired_at(self.now()),\n+        )\n \n     def deactivate(self, code: str) -> None:\n         \"\"\"Soft-delete a link. Idempotent: an inactive link keeps its deactivated_at.\"\"\"\n@@ -154,12 +284,24 @@ class LinkService:\n             link.deactivated_at = utcnow()\n             self.session.commit()\n \n-    def resolve_for_redirect(self, code: str) -> str:\n-        \"\"\"Return the target URL of an active link without recording a click (HEAD).\"\"\"\n+    def _get_redirectable(self, code: str) -> Link:\n+        \"\"\"Return a link that may be redirected to, using only the already-loaded row.\n+\n+        Raises:\n+            NotFoundError: the code is malformed or unknown.\n+            GoneError: the link is deactivated (takes precedence over expiry).\n+            LinkExpiredError: the link's ``expires_at`` is at or before now.\n+        \"\"\"\n         link = self._get_or_404(code)\n         if not link.is_active:\n             raise GoneError()\n-        return link.url\n+        if link.is_expired_at(self.now()):\n+            raise LinkExpiredError()\n+        return link\n+\n+    def resolve_for_redirect(self, code: str) -> str:\n+        \"\"\"Return the target URL of an active, unexpired link without recording a click (HEAD).\"\"\"\n+        return self._get_redirectable(code).url\n \n     def resolve_and_record_click(\n         self,\n@@ -168,14 +310,12 @@ class LinkService:\n         user_agent: str | None,\n         client_ip: str | None,\n     ) -> str:\n-        \"\"\"Return the target URL of an active link and record a click (best-effort).\n+        \"\"\"Return the target URL of an active, unexpired link and record a click (best-effort).\n \n         A failure while recording the click is rolled back and logged (never with the\n         client IP); the URL is still returned so the redirect succeeds.\n         \"\"\"\n-        link = self._get_or_404(code)\n-        if not link.is_active:\n-            raise GoneError()\n+        link = self._get_redirectable(code)\n         url = link.url\n         link_id = link.id\n         try:\ndiff --git a/app/services/stats_service.py b/app/services/stats_service.py\nindex 98993e8..612bb7c 100644\n--- a/app/services/stats_service.py\n+++ b/app/services/stats_service.py\n@@ -39,7 +39,7 @@ class StatsService:\n         self.click_repo = ClickRepository(session)\n \n     def get_stats(self, code: str, days: int = 30, now: datetime | None = None) -> LinkStats:\n-        \"\"\"Return stats for ``code`` (active or deactivated).\n+        \"\"\"Return stats for ``code`` (active, deactivated or expired).\n \n         ``clicks_per_day`` covers the last ``days`` UTC calendar days including today and\n         lists only days with clicks, ascending. ``total_clicks`` and ``top_referrers``\n@@ -49,7 +49,7 @@ class StatsService:\n         Raises:\n             NotFoundError: the code is malformed or no such link exists.\n         \"\"\"\n-        if not codes.is_valid_code_format(code):\n+        if not codes.is_valid_lookup_code(code):\n             raise NotFoundError()\n         link = self.link_repo.get_by_code(code)\n         if link is None:",
+      "gates": [
+        {
+          "name": "owned_files_created",
+          "passed": true,
+          "detail": "ok",
+          "severity": "block"
+        },
+        {
+          "name": "compiles",
+          "passed": true,
+          "detail": "ok",
+          "severity": "block"
+        },
+        {
+          "name": "write_scope",
+          "passed": true,
+          "detail": "ok",
+          "severity": "block"
+        },
+        {
+          "name": "policy_scan",
+          "passed": true,
+          "detail": "0 findings, none blocking",
+          "severity": "block"
+        }
+      ],
+      "attempt": 1,
+      "metrics": {
+        "agent_turns": 7,
+        "tool_calls": 16,
+        "denied_calls": 0,
+        "model": "claude-opus-5-5",
+        "cost_usd": 0.4161,
+        "transcript": "/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.sdlc/runs/run_2e7440e535cd/transcripts/impl_WP-4-a1.jsonl",
+        "files_written": [
+          "app/services/link_service.py",
+          "app/services/stats_service.py"
+        ],
+        "diff": {
+          "files": [
+            "app/services/link_service.py",
+            "app/services/stats_service.py"
+          ],
+          "changed_lines": 208
+        }
+      }
+    },
+    "subject_hash": "cdc1a0358ac8b3fc",
+    "status": "approved",
+    "requested_at": 1792116614.0272992,
+    "decided_at": 1792116614.028481,
+    "decided_by": "policy:auto-approve",
+    "comment": "auto-approved: kind is auto-approvable under policy.autonomy",
+    "response": {}
+  },
+  {
+    "id": "apr_af9c53b2dd33",
+    "run_id": "run_2e7440e535cd",
+    "node_id": "release_gate",
+    "kind": "release",
+    "summary": "Release v1.1.0 \u2014 all readiness checks passed",
+    "payload": {
+      "checklist": [
+        {
+          "name": "verification_passed",
+          "passed": true,
+          "detail": "head 9a8867737e7158996bf54d9a1cc172b64ee36327",
+          "severity": "block"
+        },
+        {
+          "name": "coverage_threshold",
+          "passed": true,
+          "detail": "99.06% >= 80.0%",
+          "severity": "block"
+        },
+        {
+          "name": "design_approved",
+          "passed": true,
+          "detail": "architecture approved by policy:auto-approve",
+          "severity": "block"
+        },
+        {
+          "name": "security_clear",
+          "passed": true,
+          "detail": "0 high/critical findings",
+          "severity": "block"
+        },
+        {
+          "name": "documentation",
+          "passed": true,
+          "detail": "docs agent output present",
+          "severity": "block"
+        },
+        {
+          "name": "workspace_head_verified",
+          "passed": true,
+          "detail": "nothing merged after the last verification",
+          "severity": "block"
+        }
+      ],
+      "release_notes": "# Release v1.1.0 \u2014 CR-142 (custom aliases and link expiration) and BUG-77 (URL scheme validation investigation) for the URL shortener\n\nThe existing FastAPI/SQLAlchemy URL shortener only issues random 7-character base62 codes, and its links never expire. CR-142 adds two things. First, clients can choose their own short code (alias): 3-32 characters from [A-Za-z0-9_-]. Reserved words give 422 and a taken alias gives 409. Second, links can have an optional future expiry `expires_at`. Redirecting an expired link gives 410 Gone, and link metadata reports whether the link is expired. Both features must be backwards compatible. Existing endpoints, response fields and the 165 existing tests must keep working. The new `links.expires_at` column needs an explicit migration, because startup only runs `create_all`, which never alters existing tables. BUG-77 says upper-case schemes (`HTTP://Example.com`) were rejected and that a `javascript:` URL was once accepted. Investigation shows the current validator accepts upper-case schemes and rejects every `javascript:` variant, so the URL validator has no defect. Regression tests must still lock in the reported inputs. Other defects found during the investigation must be fixed: `metrics` is missing from the reserved list, the lookup format check is base62-only, the idempotency hash covers only the URL, every IntegrityError is treated as a code collision, and the docs wrongly say there is no authentication.\n\n## Delivered requirements\n- **FR-1** Create a link with a custom alias \u2014 verified by tests\n- **FR-2** Reject reserved words as aliases \u2014 verified by tests\n- **FR-3** Alias uniqueness gives 409 \u2014 verified by tests\n- **FR-4** Alias links resolve on every code-addressed endpoint \u2014 verified by tests\n- **FR-5** Accept and validate an optional expires_at at creation \u2014 verified by tests\n- **FR-6** Expired links return 410 Gone on redirect \u2014 verified by tests\n- **FR-7** Link metadata reports expiry state \u2014 verified by tests\n- **FR-8** Explicit, idempotent schema migration for links.expires_at \u2014 verified by tests\n- **FR-9** Idempotency-Key covers alias and expires_at \u2014 verified by tests\n- **FR-10** Add 'metrics' to the reserved code list \u2014 verified by tests\n- **FR-11** BUG-77 regression tests for URL scheme validation \u2014 verified by tests\n- **FR-12** Backwards compatibility and regression protection \u2014 verified by tests\n- **FR-13** OpenAPI response documentation for new cases \u2014 not traced\n- **FR-14** Documentation updates, including the stale authentication statements \u2014 not traced\n\n## API\n- `POST /api/links` \u2014 Create a short link, optionally with a custom alias and/or an expiry. Requires X-API-Key. Optional header Idempotency-Key (1-255 chars, not blank). Sets Location: /api/links/{code}. A replay sets Idempotent-Replayed: true and returns the original link's current state.\n- `GET /api/links/{code}` \u2014 Get link metadata (active, deactivated or expired). Requires X-API-Key. {code} accepts ^[A-Za-z0-9_-]{1,32}$. Anything else gives 404 without a DB lookup.\n- `DELETE /api/links/{code}` \u2014 Soft-delete (deactivate) a link. Idempotent. Works for expired links and aliases containing '-'/'_'. Requires X-API-Key.\n- `GET /api/links/{code}/stats` \u2014 Click statistics. Works for deactivated and expired links and aliases containing '-'/'_'. Requires X-API-Key.\n- `GET /{code}` \u2014 Public redirect (catch-all router, registered last). 307 with the exact stored URL in Location (not re-quoted) and Cache-Control: no-store. Records a click best-effort. HEAD /{code} behaves the same but records no click, and is now included in OpenAPI with the same 307/404/410 responses. 404/410 send no Location and record no click.\n- `GET /healthz` \u2014 Liveness probe (unchanged, not shadowed by /{code})\n- `GET /readyz` \u2014 Readiness probe (unchanged, not shadowed by /{code})\n\n## Quality\n- Tests: 338 passed, 0 failed\n- Coverage: 99.06%\n- Security findings: 6 (0 high/critical)\n\n## Architecture decisions\n- ADR-1 Alias format in schema, reserved words in service with codes.RESERVED_CODES: LinkCreate validates alias type, length and charset (StrictStr, 3-32, [A-Za-z0-9_-]), giving a FastAPI 422 list detail. LinkService rejects reserved aliases case-insensitively via codes.is_reserved, raising UnprocessableEntityError('Alias is reserved'), which gives 422. 'metrics' is added to codes.RESERVED_CODES, so generated codes and aliases share one list.\n- ADR-2 Separate lookup validator instead of widening CODE_PATTERN: Add codes.is_valid_lookup_code (^[A-Za-z0-9_-]{1,32}$) and use it in LinkService._get_or_404 and StatsService.get_stats. is_valid_code_format stays base62-only.\n- ADR-3 Alias path is a single insert, and IntegrityError gives 409: If alias is given: pre-check get_by_code (friendly 409), then one LinkRepository.add. On IntegrityError: rollback. If an Idempotency-Key was sent and its record now exists, replay it or return 409. Otherwise raise ConflictError('Alias already in use'). codes.generate_code is never called on this path. The generated-code retry loop is unchanged.\n- ADR-4 Idempotent startup migration with literal DDL in core/db.ensure_schema: After create_all, ensure_schema(engine) inspects links. If expires_at is missing, it executes text('ALTER TABLE links ADD COLUMN expires_at DATETIME NULL'). On the postgresql dialect only, it executes text('ALTER TABLE links ADD COLUMN expires_at TIMESTAMP NULL'), because PostgreSQL has no DATETIME type. Both are literal strings passed straight to text(). If the ALTER fails with DBAPIError and the column now exists, this is a tolerated concurrent race. Otherwise it logs an error and re-raises. The manual SQL is documented. No Alembic.\n- ADR-5 expires_at: ISO-only parsing in schema, future check in service with an injectable clock: LinkCreate.expires_at: dt.datetime|None with a mode='before' validator that accepts only None, datetime instances, or str matching a strict ISO-8601 date-time regex (rejects int/bool/''/'tomorrow'/date-only/unix strings). Pydantic then parses it (rejecting month 13), and a mode='after' validator normalises it with _as_utc (naive = UTC). LinkService converts to naive UTC and requires expires_at > self.now(). Otherwise it raises UnprocessableEntityError('expires_at must be in the future'). The clock is LinkService(clock=...), which deps fill from app.state.clock (None means models.utcnow, looked up at call time).\n- ADR-6 Backwards-compatible idempotency request_hash: compute_request_hash(url, alias, expires_at_naive_utc) returns sha256(url) when alias and expires_at are both None. Otherwise it returns sha256 of json.dumps({'alias':..., 'expires_at': 'YYYY-MM-DDTHH:MM:SS.ffffffZ' or None, 'url':...}, sort_keys=True, separators=(',',':'), ensure_ascii=False). The idempotency lookup runs before the reserved/future checks, so a retried successful request always replays.\n- ADR-7 Expiry evaluated from the loaded row; deactivation takes precedence: Link.is_expired_at(now) returns expires_at is not None and expires_at <= now. Redirect and HEAD check `not is_active` first (GoneError, 'Link has been deactivated'), then expiry (LinkExpiredError, 'Link has expired'), before any click insert. is_expired for responses is computed by the service and returned in CreateResult/LinkDetail. is_active is not changed by expiry.\n- ADR-8 Expose HEAD /{code} in OpenAPI: Change @router.head('/{code}') to include_in_schema=True with responses 307/404/410, so FR-13's 410 documentation covers HEAD.\n\n## Known risks\n- Legacy databases lack links.expires_at. Without migration every links query gives 503. \u2014 mitigation: ensure_schema runs on every startup after create_all. Legacy-DB boot test run twice (NFR-3). Manual SQL and 'migrate once before multi-instance rollout' in OPERATIONS.md.\n- A request_hash change breaks replay of stored keys. \u2014 mitigation: Keep sha256(url) when there are no new fields (ADR-6). Test with a directly inserted legacy row.\n- Postgres rejects DATETIME, so the required literal DDL alone would break legacy Postgres DBs. \u2014 mitigation: Literal TIMESTAMP branch for the postgresql dialect only (ADR-4). Documented in OPERATIONS.md with per-dialect manual SQL.\n- Alias race mapped to a retry or 503 instead of 409. \u2014 mitigation: Separate alias branch (ADR-3). Monkeypatched IntegrityError test asserts 409, rollback, zero extra rows, and that generate_code is not called.\n- Naive/aware datetime mixing causes a TypeError (500) or shifted expiry. \u2014 mitigation: Schema normalises to aware UTC. The service converts to naive UTC before compare/persist. now() normalises any aware injected clock. Offset and naive tests.\n- Lax parsing accepts numeric expires_at. \u2014 mitigation: Before-validator ISO regex (ADR-5). Tests for 1893456000, true, '', 'tomorrow', month 13.\n- MySQL case-insensitive collation makes 'MyLink'/'mylink' collide and lookups case-insensitive. \u2014 mitigation: Documented caveat. Binary collation deferred. Tests use SQLite.\n- Pydantic constraint handling on Optional StrictStr could let bad aliases through. \u2014 mitigation: Belt and braces: an after-validator re.fullmatch(r'[A-Za-z0-9_-]{3,32}') plus a defensive codes.is_valid_alias check in the service (422). Tests cover every listed bad input.\n- Computed is_expired makes replay bodies change over time. \u2014 mitigation: Documented: replays reflect current state, as is_active already does. Computed from the loaded row.\n- Widened lookup format changes behaviour for existing malformed-code tests ('abc-def', 'abc_def'). \u2014 mitigation: These become valid-but-unknown and still return 404, which the existing assertions accept (404/422 and 404 respectively).\n",
+      "outputs_preview": {
+        "release_readiness": {
+          "version": "1.1.0",
+          "checklist": [
+            {
+              "name": "verification_passed",
+              "passed": true,
+              "detail": "head 9a8867737e7158996bf54d9a1cc172b64ee36327",
+              "severity": "block"
+            },
+            {
+              "name": "coverage_threshold",
+              "passed": true,
+              "detail": "99.06% >= 80.0%",
+              "severity": "block"
+            },
+            {
+              "name": "design_approved",
+              "passed": true,
+              "detail": "architecture approved by policy:auto-approve",
+              "severity": "block"
+            },
+            {
+              "name": "security_clear",
+              "passed": true,
+              "detail": "0 high/critical findings",
+              "severity": "block"
+            },
+            {
+              "name": "documentation",
+              "passed": true,
+              "detail": "docs agent output present",
+              "severity": "block"
+            },
+            {
+              "name": "workspace_head_verified",
+              "passed": true,
+              "detail": "nothing merged after the last verification",
+              "severity": "block"
+            }
+          ],
+          "release_notes": "# Release v1.1.0 \u2014 CR-142 (custom aliases and link expiration) and BUG-77 (URL scheme validation investigation) for the URL shortener\n\nThe existing FastAPI/SQLAlchemy URL shortener only issues random 7-character base62 codes, and its links never expire. CR-142 adds two things. First, clients can choose their own short code (alias): 3-32 characters from [A-Za-z0-9_-]. Reserved words give 422 and a taken alias gives 409. Second, links can have an optional future expiry `expires_at`. Redirecting an expired link gives 410 Gone, and link metadata reports whether the link is expired. Both features must be backwards compatible. Existing endpoints, response fields and the 165 existing tests must keep working. The new `links.expires_at` column needs an explicit migration, because startup only runs `create_all`, which never alters existing tables. BUG-77 says upper-case schemes (`HTTP://Example.com`) were rejected and that a `javascript:` URL was once accepted. Investigation shows the current validator accepts upper-case schemes and rejects every `javascript:` variant, so the URL validator has no defect. Regression tests must still lock in the reported inputs. Other defects found during the investigation must be fixed: `metrics` is missing from the reserved list, the lookup format check is base62-only, the idempotency hash covers only the URL, every IntegrityError is treated as a code collision, and the docs wrongly say there is no authentication.\n\n## Delivered requirements\n- **FR-1** Create a link with a custom alias \u2014 verified by tests\n- **FR-2** Reject reserved words as aliases \u2014 verified by tests\n- **FR-3** Alias uniqueness gives 409 \u2014 verified by tests\n- **FR-4** Alias links resolve on every code-addressed endpoint \u2014 verified by tests\n- **FR-5** Accept and validate an optional expires_at at creation \u2014 verified by tests\n- **FR-6** Expired links return 410 Gone on redirect \u2014 verified by tests\n- **FR-7** Link metadata reports expiry state \u2014 verified by tests\n- **FR-8** Explicit, idempotent schema migration for links.expires_at \u2014 verified by tests\n- **FR-9** Idempotency-Key covers alias and expires_at \u2014 verified by tests\n- **FR-10** Add 'metrics' to the reserved code list \u2014 verified by tests\n- **FR-11** BUG-77 regression tests for URL scheme validation \u2014 verified by tests\n- **FR-12** Backwards compatibility and regression protection \u2014 verified by tests\n- **FR-13** OpenAPI response documentation for new cases \u2014 not traced\n- **FR-14** Documentation updates, including the stale authentication statements \u2014 not traced\n\n## API\n- `POST /api/links` \u2014 Create a short link, optionally with a custom alias and/or an expiry. Requires X-API-Key. Optional header Idempotency-Key (1-255 chars, not blank). Sets Location: /api/links/{code}. A replay sets Idempotent-Replayed: true and returns the original link's current state.\n- `GET /api/links/{code}` \u2014 Get link metadata (active, deactivated or expired). Requires X-API-Key. {code} accepts ^[A-Za-z0-9_-]{1,32}$. Anything else gives 404 without a DB lookup.\n- `DELETE /api/links/{code}` \u2014 Soft-delete (deactivate) a link. Idempotent. Works for expired links and aliases containing '-'/'_'. Requires X-API-Key.\n- `GET /api/links/{code}/stats` \u2014 Click statistics. Works for deactivated and expired links and aliases containing '-'/'_'. Requires X-API-Key.\n- `GET /{code}` \u2014 Public redirect (catch-all router, registered last). 307 with the exact stored URL in Location (not re-quoted) and Cache-Control: no-store. Records a click best-effort. HEAD /{code} behaves the same but records no click, and is now included in OpenAPI with the same 307/404/410 responses. 404/410 send no Location and record no click.\n- `GET /healthz` \u2014 Liveness probe (unchanged, not shadowed by /{code})\n- `GET /readyz` \u2014 Readiness probe (unchanged, not shadowed by /{code})\n\n## Quality\n- Tests: 338 passed, 0 failed\n- Coverage: 99.06%\n- Security findings: 6 (0 high/critical)\n\n## Architecture decisions\n- ADR-1 Alias format in schema, reserved words in service with codes.RESERVED_CODES: LinkCreate validates alias type, length and charset (StrictStr, 3-32, [A-Za-z0-9_-]), giving a FastAPI 422 list detail. LinkService rejects reserved aliases case-insensitively via codes.is_reserved, raising UnprocessableEntityError('Alias is reserved'), which gives 422. 'metrics' is added to codes.RESERVED_CODES, so generated codes and aliases share one list.\n- ADR-2 Separate lookup validator instead of widening CODE_PATTERN: Add codes.is_valid_lookup_code (^[A-Za-z0-9_-]{1,32}$) and use it in LinkService._get_or_404 and StatsService.get_stats. is_valid_code_format stays base62-only.\n- ADR-3 Alias path is a single insert, and IntegrityError gives 409: If alias is given: pre-check get_by_code (friendly 409), then one LinkRepository.add. On IntegrityError: rollback. If an Idempotency-Key was sent and its record now exists, replay it or return 409. Otherwise raise ConflictError('Alias already in use'). codes.generate_code is never called on this path. The generated-code retry loop is unchanged.\n- ADR-4 Idempotent startup migration with literal DDL in core/db.ensure_schema: After create_all, ensure_schema(engine) inspects links. If expires_at is missing, it executes text('ALTER TABLE links ADD COLUMN expires_at DATETIME NULL'). On the postgresql dialect only, it executes text('ALTER TABLE links ADD COLUMN expires_at TIMESTAMP NULL'), because PostgreSQL has no DATETIME type. Both are literal strings passed straight to text(). If the ALTER fails with DBAPIError and the column now exists, this is a tolerated concurrent race. Otherwise it logs an error and re-raises. The manual SQL is documented. No Alembic.\n- ADR-5 expires_at: ISO-only parsing in schema, future check in service with an injectable clock: LinkCreate.expires_at: dt.datetime|None with a mode='before' validator that accepts only None, datetime instances, or str matching a strict ISO-8601 date-time regex (rejects int/bool/''/'tomorrow'/date-only/unix strings). Pydantic then parses it (rejecting month 13), and a mode='after' validator normalises it with _as_utc (naive = UTC). LinkService converts to naive UTC and requires expires_at > self.now(). Otherwise it raises UnprocessableEntityError('expires_at must be in the future'). The clock is LinkService(clock=...), which deps fill from app.state.clock (None means models.utcnow, looked up at call time).\n- ADR-6 Backwards-compatible idempotency request_hash: compute_request_hash(url, alias, expires_at_naive_utc) returns sha256(url) when alias and expires_at are both None. Otherwise it returns sha256 of json.dumps({'alias':..., 'expires_at': 'YYYY-MM-DDTHH:MM:SS.ffffffZ' or None, 'url':...}, sort_keys=True, separators=(',',':'), ensure_ascii=False). The idempotency lookup runs before the reserved/future checks, so a retried successful request always replays.\n- ADR-7 Expiry evaluated from the loaded row; deactivation takes precedence: Link.is_expired_at(now) returns expires_at is not None and expires_at <= now. Redirect and HEAD check `not is_active` first (GoneError, 'Link has been deactivated'), then expiry (LinkExpiredError, 'Link has expired'), before any click insert. is_expired for responses is computed by the service and returned in CreateResult/LinkDetail. is_active is not changed by expiry.\n- ADR-8 Expose HEAD /{code} in OpenAPI: Change @router.head('/{code}') to include_in_schema=True with responses 307/404/410, so FR-13's 410 documentation covers HEAD.\n\n## Known risks\n- Legacy databases lack links.expires_at. Without migration every links query gives 503. \u2014 mitigation: ensure_schema runs on every startup after create_all. Legacy-DB boot test run twice (NFR-3). Manual SQL and 'migrate once before multi-instance rollout' in OPERATIONS.md.\n- A request_hash change breaks replay of stored keys. \u2014 mitigation: Keep sha256(url) when there are no new fields (ADR-6). Test with a directly inserted legacy row.\n- Postgres rejects DATETIME, so the required literal DDL alone would break legacy Postgres DBs. \u2014 mitigation: Literal TIMESTAMP branch for the postgresql dialect only (ADR-4). Documented in OPERATIONS.md with per-dialect manual SQL.\n- Alias race mapped to a retry or 503 instead of 409. \u2014 mitigation: Separate alias branch (ADR-3). Monkeypatched IntegrityError test asserts 409, rollback, zero extra rows, and that generate_code is not called.\n- Naive/aware datetime mixing causes a TypeError (500) or shifted expiry. \u2014 mitigation: Schema normalises to aware UTC. The service converts to naive UTC before compare/persist. now() normalises any aware injected clock. Offset and naive tests.\n- Lax parsing accepts numeric expires_at. \u2014 mitigation: Before-validator ISO regex (ADR-5). Tests for 1893456000, true, '', 'tomorrow', month 13.\n- MySQL case-insensitive collation makes 'MyLink'/'mylink' collide and lookups case-insensitive. \u2014 mitigation: Documented caveat. Binary collation deferred. Tests use SQLite.\n- Pydantic constraint handling on Optional StrictStr could let bad aliases through. \u2014 mitigation: Belt and braces: an after-validator re.fullmatch(r'[A-Za-z0-9_-]{3,32}') plus a defensive codes.is_valid_alias check in the service (422). Tests cover every listed bad input.\n- Computed is_expired makes replay bodies change over time. \u2014 mitigation: Documented: replays reflect current state, as is_active already does. Computed from the loaded row.\n- Widened lookup format changes behaviour for existing malformed-code tests ('abc-def', 'abc_def'). \u2014 mitigation: These become valid-but-unknown and still return 404, which the existing assertions accept (404/422 and 404 respectively).\n",
+          "head": "9a8867737e7158996bf54d9a1cc172b64ee36327",
+          "design_hash": "c09f3c47030c55ea"
+        }
+      },
+      "diff": null,
+      "gates": [
+        {
+          "name": "verification_passed",
+          "passed": true,
+          "detail": "head 9a8867737e7158996bf54d9a1cc172b64ee36327",
+          "severity": "block"
+        },
+        {
+          "name": "coverage_threshold",
+          "passed": true,
+          "detail": "99.06% >= 80.0%",
+          "severity": "block"
+        },
+        {
+          "name": "design_approved",
+          "passed": true,
+          "detail": "architecture approved by policy:auto-approve",
+          "severity": "block"
+        },
+        {
+          "name": "security_clear",
+          "passed": true,
+          "detail": "0 high/critical findings",
+          "severity": "block"
+        },
+        {
+          "name": "documentation",
+          "passed": true,
+          "detail": "docs agent output present",
+          "severity": "block"
+        },
+        {
+          "name": "workspace_head_verified",
+          "passed": true,
+          "detail": "nothing merged after the last verification",
+          "severity": "block"
+        }
+      ],
+      "attempt": 1,
+      "metrics": {}
+    },
+    "subject_hash": "8b7c5b781d80870f",
+    "status": "approved",
+    "requested_at": 1792120064.6360052,
+    "decided_at": 1792121794.7712379,
+    "decided_by": "human:kajalmahata",
+    "comment": "Release approved: all readiness checks passed, 0 high security findings.",
+    "response": {}
+  }
+]

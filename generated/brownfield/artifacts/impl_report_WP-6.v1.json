@@ -1,0 +1,28 @@
+{
+  "name": "impl_report:WP-6",
+  "version": 1,
+  "hash": "767565af07e20a35",
+  "producer": "impl:WP-6",
+  "derived_from": {
+    "requirements_spec": "a29fdf7abe9a8b61",
+    "design": "c09f3c47030c55ea"
+  },
+  "value": {
+    "summary": "WP-6: updated docs/API.md, docs/OPERATIONS.md, README.md and CHANGELOG.md in place, keeping their existing structure. They now cover the CR-142 custom aliases and link expiration, the links.expires_at schema change and its migration, and the BUG-77 findings. They also correct the stale 'no authentication' statements. The auth details come from the actual code: X-API-Key header, API_KEY setting, fail closed, constant-time comparison, 401 with WWW-Authenticate: ApiKey, and a minimum key length of 16. `python -m compileall -q app` passes and the full test suite passes.",
+    "files_changed": [
+      "docs/API.md",
+      "docs/OPERATIONS.md",
+      "README.md",
+      "CHANGELOG.md"
+    ],
+    "notes": [
+      "API.md: replaced 'Authentication: none'. X-API-Key is required for /api/links*, the check fails closed and runs before the body is validated, and GET/HEAD /{code}, the probes and the docs routes are public. Documented alias (format, case-sensitive, stored as code, immutable, never released, race gives 409) and expires_at (accepted ISO-8601 forms, naive = UTC, strictly in the future, no maximum, immutable, normalised to 'Z'). Added the reserved list, the order of checks (idempotency lookup before the reserved and future checks), the 201/400/401/409/422/503 tables, the expires_at and is_expired fields, the widened {code} format ^[A-Za-z0-9_-]{1,32}$, both 410 details with deactivation taking precedence, HEAD now in OpenAPI, the request_hash definition with a canonical JSON example, 'replays reflect current state', and the BUG-77 javascript: variants in the URL table. All curl examples now send -H \"X-API-Key: $API_KEY\".",
+      "OPERATIONS.md: new 'Schema migration: links.expires_at' section. It covers the automatic idempotent step after create_all (a table of the situations and the app.migrations log lines), the manual SQL for SQLite/MySQL (DATETIME NULL) and PostgreSQL (TIMESTAMP NULL), migrating once before a multi-instance rollout, and why rollback is safe plus what old code does differently after a rollback. Also updated: the startup steps, the log events table, new failure modes (401, 409 alias, 410 expired, migration failure at startup), the data model with expires_at and the new request_hash meaning, the MySQL case-insensitive collation caveat, retention, scaling, and corrected security notes (API key required, fail closed, hmac.compare_digest, reserved words).",
+      "README.md: rewrote the security notice around the API-key requirement. The feature list gains API-key protection, custom aliases, link expiration and the reserved words. Added a missing API_KEY row to the configuration table, a note on the startup migration, 401 in the API overview, X-API-Key in the examples plus an alias and expiry example, and project-layout notes.",
+      "CHANGELOG.md [Unreleased]: Added (aliases, expiration, the new response fields, OpenAPI 409/410/422 and HEAD), Changed (schema change and migration, widened lookup, 'metrics' reserved, backwards-compatible idempotency hash, alias race gives 409), Fixed (docs wrongly said there was no authentication), and a separate 'Investigated' subsection for BUG-77 (not reproducible, likely causes, regression tests, no behaviour change). The historical 1.0.0 Security bullet is unchanged."
+    ],
+    "open_issues": [
+      "The docs describe the target behaviour from the approved design. WP-1 is merged, but WP-2 to WP-5 were not yet in the workspace when I wrote this: app/core/db.ensure_schema, Link.expires_at, the alias and expires_at schema fields, the service rules, and HEAD in OpenAPI. If those packages change any log message text, error detail or behaviour, update the matching docs passages. The migration log messages are copied word-for-word from the WP-2 spec."
+    ]
+  }
+}

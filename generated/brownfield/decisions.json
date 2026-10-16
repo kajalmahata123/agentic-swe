@@ -1,0 +1,363 @@
+[
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: The alias request field is named `alias`. The response keeps reporting the short code in the existing `code` field. No separate alias field is added to responses.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089481.487471
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Expiry is evaluated against server UTC time through an injectable clock. Comparison: expired when expires_at <= now. Creation requires expires_at > now.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089481.487472
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Datetimes are stored as naive UTC (the existing convention) and serialised in responses as UTC with a 'Z' suffix.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089481.487473
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Reserved-word and alias-uniqueness rules are enforced in the service layer with a new 422 domain error, using codes.RESERVED_CODES as the single source of truth. Format, length and expires_at future checks may run in the schema.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089481.487474
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Redirect (GET and HEAD /{code}) stays public. Only /api/links* needs X-API-Key.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089481.487475
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Expired links are still counted as is_active=true unless deactivated. Expiry is reported separately via is_expired.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089481.4874759
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: No index on links.expires_at is needed. It is only read per row.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089481.4874759
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: The 165-test baseline and the existing NFR-4 performance targets are the regression benchmark.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089481.487481
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Existing rows get expires_at NULL and never expire.",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089481.487482
+  },
+  {
+    "node_id": "requirements",
+    "actor": "agent:requirements",
+    "title": "Assumption: Cross-database portability (SQLite/PostgreSQL/MySQL) is tracked under the maintainability category (NFR-6).",
+    "rationale": "stated by analyst",
+    "alternatives": [],
+    "based_on": {},
+    "ts": 1792089481.4874828
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-1 assumed default: Case-sensitive and stored as given, matching the existing generated codes. The reserved-word check is case-insensitive. The MySQL collation caveat is documented.",
+    "rationale": "Changes the uniqueness checks, the lookup and possibly the DB collation. MySQL default collations already behave case-insensitively.",
+    "alternatives": [
+      "Case-sensitive, stored as given (follows the existing code semantics)",
+      "Case-insensitive, normalised to lower case",
+      "Case-insensitive uniqueness with case preserved"
+    ],
+    "based_on": {},
+    "ts": 1792089481.502366
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-2 assumed default: No. Any existing code gives 409. Soft-deleted and expired rows keep their code.",
+    "rationale": "Reuse would need deleting or renaming old rows, and it breaks stats and audit history.",
+    "alternatives": [
+      "No: any existing code (active, deactivated or expired) gives 409",
+      "Yes: reclaim expired or deactivated codes"
+    ],
+    "based_on": {},
+    "ts": 1792089481.502367
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-3 assumed default: Deactivation takes precedence. An expired-only link returns 410 {\"detail\": \"Link has expired\"}.",
+    "rationale": "Only the detail text in 410 responses and the tests change.",
+    "alternatives": [
+      "410 'Link has been deactivated' takes precedence; expired-only gives 410 'Link has expired'",
+      "410 'Link has expired' takes precedence"
+    ],
+    "based_on": {},
+    "ts": 1792089481.502368
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-4 assumed default: Naive values are treated as UTC (consistent with the existing _as_utc). Only ISO-8601 strings are accepted, and numbers or other types give 422.",
+    "rationale": "Affects validation strictness and possible time shifts in stored expiries.",
+    "alternatives": [
+      "Naive = UTC, strict ISO-8601 strings only",
+      "Reject naive values with 422",
+      "Accept lax Pydantic parsing (numbers allowed)"
+    ],
+    "based_on": {},
+    "ts": 1792089481.502369
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-5 assumed default: Automatic idempotent ALTER at startup after create_all, with the manual SQL documented in OPERATIONS.md. No Alembic in this change.",
+    "rationale": "Determines deployment steps and whether a new dependency is needed.",
+    "alternatives": [
+      "Automatic idempotent ALTER at startup plus documented manual SQL",
+      "Manual SQL only",
+      "Introduce Alembic"
+    ],
+    "based_on": {},
+    "ts": 1792089481.50237
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-6 assumed default: Superset. Keep static and favicon.ico and add metrics.",
+    "rationale": "Removing entries would weaken existing protection of those paths.",
+    "alternatives": [
+      "Superset: keep existing entries and add metrics",
+      "Exactly the seven listed words"
+    ],
+    "based_on": {},
+    "ts": 1792089481.502371
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-7 assumed default: No limit beyond being strictly in the future at request time.",
+    "rationale": "Adds validation rules and possibly config settings.",
+    "alternatives": [
+      "No limit beyond 'must be in the future'",
+      "Cap, e.g. 10 years",
+      "Minimum lifetime, e.g. 1 minute"
+    ],
+    "based_on": {},
+    "ts": 1792089481.502372
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-8 assumed default: No. Both are set only at creation. Updating them is out of scope.",
+    "rationale": "A new endpoint would be a larger scope change.",
+    "alternatives": [
+      "No, immutable in this CR",
+      "Add PATCH /api/links/{code}"
+    ],
+    "based_on": {},
+    "ts": 1792089481.502374
+  },
+  {
+    "node_id": "clarify",
+    "actor": "agent:requirements",
+    "title": "Q-9 assumed default: No change to URL validation behaviour. Add regression tests, and record the findings (likely 401 from the API key, pasted whitespace, or direct DB inserts) in CHANGELOG and the support response.",
+    "rationale": "Trimming would change accepted inputs. Redirect-time validation adds work on the hot path.",
+    "alternatives": [
+      "No behaviour change; add regression tests and document the findings",
+      "Trim surrounding whitespace before validation",
+      "Also re-validate stored URLs at redirect"
+    ],
+    "based_on": {},
+    "ts": 1792089481.502375
+  },
+  {
+    "node_id": "design",
+    "actor": "policy:auto-approve",
+    "title": "design approved",
+    "rationale": "auto-approved: kind is auto-approvable under policy.autonomy",
+    "alternatives": [],
+    "based_on": {
+      "subject": "7fa430ba69fc52ec"
+    },
+    "ts": 1792116463.061866
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-1: Alias format in schema, reserved words in service with codes.RESERVED_CODES",
+    "rationale": "LinkCreate validates alias type, length and charset (StrictStr, 3-32, [A-Za-z0-9_-]), giving a FastAPI 422 list detail. LinkService rejects reserved aliases case-insensitively via codes.is_reserved, raising UnprocessableEntityError('Alias is reserved'), which gives 422. 'metrics' is added to codes.RESERVED_CODES, so generated codes and aliases share one list. \u2014 Schemas may not import app.* (architecture test), so the reserved list cannot be checked there without duplicating it. Keeping it in the service gives one source of truth (NFR-5, R6). The format check in the schema documents the pattern in OpenAPI.",
+    "alternatives": [
+      "Duplicate the reserved list in schemas plus an equality test",
+      "Do all alias validation in the service (loses the OpenAPI pattern and the list-style 422)"
+    ],
+    "based_on": {
+      "requirements_spec": "a29fdf7abe9a8b61"
+    },
+    "ts": 1792116463.041301
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-2: Separate lookup validator instead of widening CODE_PATTERN",
+    "rationale": "Add codes.is_valid_lookup_code (^[A-Za-z0-9_-]{1,32}$) and use it in LinkService._get_or_404 and StatsService.get_stats. is_valid_code_format stays base62-only. \u2014 tests/test_codes.py asserts is_valid_code_format('abc-123') is False (R3). Lookups must accept aliases with '-'/'_'. Malformed codes still get 404 without a query. '-'/'_' codes that do not exist are now valid-but-unknown, which is still 404.",
+    "alternatives": [
+      "Widen CODE_PATTERN (breaks existing tests)",
+      "Skip the format check on lookup (extra DB queries for garbage paths)"
+    ],
+    "based_on": {
+      "requirements_spec": "a29fdf7abe9a8b61"
+    },
+    "ts": 1792116463.041304
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-3: Alias path is a single insert, and IntegrityError gives 409",
+    "rationale": "If alias is given: pre-check get_by_code (friendly 409), then one LinkRepository.add. On IntegrityError: rollback. If an Idempotency-Key was sent and its record now exists, replay it or return 409. Otherwise raise ConflictError('Alias already in use'). codes.generate_code is never called on this path. The generated-code retry loop is unchanged. \u2014 Under a uniqueness race exactly one request wins and the rest get 409, never a random code or 503 (FR-3, NFR-4, R4). The unique constraint uq_links_code is the real guarantee.",
+    "alternatives": [
+      "Reuse the retry loop (wrong status)",
+      "Rely only on the pre-check (racy)"
+    ],
+    "based_on": {
+      "requirements_spec": "a29fdf7abe9a8b61"
+    },
+    "ts": 1792116463.041306
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-4: Idempotent startup migration with literal DDL in core/db.ensure_schema",
+    "rationale": "After create_all, ensure_schema(engine) inspects links. If expires_at is missing, it executes text('ALTER TABLE links ADD COLUMN expires_at DATETIME NULL'). On the postgresql dialect only, it executes text('ALTER TABLE links ADD COLUMN expires_at TIMESTAMP NULL'), because PostgreSQL has no DATETIME type. Both are literal strings passed straight to text(). If the ALTER fails with DBAPIError and the column now exists, this is a tolerated concurrent race. Otherwise it logs an error and re-raises. The manual SQL is documented. No Alembic. \u2014 create_all never alters tables (R1). Literal text() keeps the static test green. SQLite and MySQL get exactly the DDL in the requirement. The postgresql branch is a deliberate, called-out deviation so that pre-CR-142 Postgres databases actually migrate: DATETIME would fail there with 'type does not exist'. TIMESTAMP is what SQLAlchemy DateTime creates on Postgres anyway. TIMESTAMP is not used everywhere because on MySQL it means TZ conversion and a 2038 limit.",
+    "alternatives": [
+      "Alembic (out of scope, new dependency)",
+      "Manual SQL only (deploys break until a DBA acts)",
+      "Single DATETIME literal for all dialects (broken on PostgreSQL)",
+      "Compile the type via the dialect and format it into SQL (string-built SQL is forbidden)"
+    ],
+    "based_on": {
+      "requirements_spec": "a29fdf7abe9a8b61"
+    },
+    "ts": 1792116463.041308
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-5: expires_at: ISO-only parsing in schema, future check in service with an injectable clock",
+    "rationale": "LinkCreate.expires_at: dt.datetime|None with a mode='before' validator that accepts only None, datetime instances, or str matching a strict ISO-8601 date-time regex (rejects int/bool/''/'tomorrow'/date-only/unix strings). Pydantic then parses it (rejecting month 13), and a mode='after' validator normalises it with _as_utc (naive = UTC). LinkService converts to naive UTC and requires expires_at > self.now(). Otherwise it raises UnprocessableEntityError('expires_at must be in the future'). The clock is LinkService(clock=...), which deps fill from app.state.clock (None means models.utcnow, looked up at call time). \u2014 Pydantic lax mode accepts numbers and numeric strings as unix time (R9). Strict mode rejects JSON strings under FastAPI's python validation. The schema cannot reach an injectable clock, but the service can, which allows the 'equal to now gives 422' test (R5).",
+    "alternatives": [
+      "Pydantic strict datetime",
+      "AwareDatetime (rejects naive input, contradicting Q-4)",
+      "Future check inside the schema using datetime.now (not controllable in tests)"
+    ],
+    "based_on": {
+      "requirements_spec": "a29fdf7abe9a8b61"
+    },
+    "ts": 1792116463.0413098
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-6: Backwards-compatible idempotency request_hash",
+    "rationale": "compute_request_hash(url, alias, expires_at_naive_utc) returns sha256(url) when alias and expires_at are both None. Otherwise it returns sha256 of json.dumps({'alias':..., 'expires_at': 'YYYY-MM-DDTHH:MM:SS.ffffffZ' or None, 'url':...}, sort_keys=True, separators=(',',':'), ensure_ascii=False). The idempotency lookup runs before the reserved/future checks, so a retried successful request always replays. \u2014 Stored keys keep replaying (R2). Equal instants in different offsets hash the same. Different alias or expiry gives 409. Failed attempts store no record because the record is only added in the same transaction as a successful link insert.",
+    "alternatives": [
+      "Always hash the new canonical payload (breaks legacy keys)",
+      "Store payload columns (DDL change)"
+    ],
+    "based_on": {
+      "requirements_spec": "a29fdf7abe9a8b61"
+    },
+    "ts": 1792116463.041312
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-7: Expiry evaluated from the loaded row; deactivation takes precedence",
+    "rationale": "Link.is_expired_at(now) returns expires_at is not None and expires_at <= now. Redirect and HEAD check `not is_active` first (GoneError, 'Link has been deactivated'), then expiry (LinkExpiredError, 'Link has expired'), before any click insert. is_expired for responses is computed by the service and returned in CreateResult/LinkDetail. is_active is not changed by expiry. \u2014 No extra query (NFR-1). Keeps the existing deactivated 410 unchanged (FR-6, Q-3). One clock source for both redirect and metadata.",
+    "alternatives": [
+      "SQL filter on expires_at (extra query or query change)",
+      "Expiry takes precedence over deactivation"
+    ],
+    "based_on": {
+      "requirements_spec": "a29fdf7abe9a8b61"
+    },
+    "ts": 1792116463.0413141
+  },
+  {
+    "node_id": "design",
+    "actor": "agent:architect",
+    "title": "ADR-8: Expose HEAD /{code} in OpenAPI",
+    "rationale": "Change @router.head('/{code}') to include_in_schema=True with responses 307/404/410, so FR-13's 410 documentation covers HEAD. \u2014 FR-13 requires HEAD to list 410. Behaviour is unchanged. Existing OpenAPI tests only assert the presence of paths and schemas.",
+    "alternatives": [
+      "Keep HEAD hidden (fails FR-13)"
+    ],
+    "based_on": {
+      "requirements_spec": "a29fdf7abe9a8b61"
+    },
+    "ts": 1792116463.0413172
+  },
+  {
+    "node_id": "plan",
+    "actor": "agent:planner",
+    "title": "Execution plan: 6 packages in 3 waves",
+    "rationale": "waves [['WP-1', 'WP-2', 'WP-3', 'WP-6'], ['WP-4'], ['WP-5']]; packages in the same wave own disjoint files and run in parallel",
+    "alternatives": [],
+    "based_on": {
+      "design": "c09f3c47030c55ea"
+    },
+    "ts": 1792116463.079694
+  },
+  {
+    "node_id": "impl:WP-4",
+    "actor": "policy:auto-approve",
+    "title": "change approved",
+    "rationale": "auto-approved: kind is auto-approvable under policy.autonomy",
+    "alternatives": [],
+    "based_on": {
+      "subject": "cdc1a0358ac8b3fc"
+    },
+    "ts": 1792116614.029346
+  },
+  {
+    "node_id": "release_gate",
+    "actor": "human:kajalmahata",
+    "title": "release approved",
+    "rationale": "Release approved: all readiness checks passed, 0 high security findings.",
+    "alternatives": [],
+    "based_on": {
+      "subject": "8b7c5b781d80870f"
+    },
+    "ts": 1792121795.414928
+  }
+]

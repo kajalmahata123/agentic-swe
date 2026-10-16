@@ -1,0 +1,27 @@
+{
+  "name": "impl_report:WP-3",
+  "version": 1,
+  "hash": "3b99c0fbb7281d44",
+  "producer": "impl:WP-3",
+  "derived_from": {
+    "requirements_spec": "177a1306cb37a92f",
+    "design": "4546f8f39faeb8aa"
+  },
+  "value": {
+    "summary": "I implemented WP-3: the schemas now carry the expiry fields, the new PATCH request body and the new hourly-stats response. Every non-slow test passes. I couldn't run the full suite in one go: `python -m pytest -q` timed out at 300 s. The only slow test I saw run, the p95 redirect timing test (NFR-4), failed at 84 ms against its 50 ms limit, which looks like this sandbox being slow rather than this change.\n\nWhat changed in `app/schemas/links.py`:\n- **Shared helpers:** `_to_naive_utc` converts any value with an offset to naive UTC and leaves naive values alone. If the conversion overflows it raises ValueError('datetime is out of range'). `_require_datetime_input` rejects anything that isn't null, a string or a datetime, including bool, int and float.\n- **`LinkCreate`:** new optional `expires_at` (default None), normalised to naive UTC. The url validation and the existing example are unchanged, and there is a second example with `expires_at` '2025-12-31T23:59:00Z'. Extra fields are still ignored.\n- **`LinkCreatedResponse`:** new `expires_at`, returned as UTC with a 'Z' or as null.\n- **`LinkDetailResponse`:** new `is_expired: bool = False`; it inherits `expires_at`.\n- **New `LinkExpiryUpdate`:** rejects unknown fields, includes both examples (a date and null), and has a required but nullable `expires_at` with the same checks as `LinkCreate`.\n- **New `HourlyClicks` and `LinkHourlyStatsResponse`:** `hour`, `start` and `end` are returned as UTC with a 'Z'.\n- `LinkStatsResponse`, `DailyClicks`, `ReferrerCount` and `ErrorResponse` are unchanged.\n\n`app/schemas/__init__.py` now exports `HourlyClicks`, `LinkExpiryUpdate` and `LinkHourlyStatsResponse`.",
+    "files_changed": [
+      "app/schemas/links.py",
+      "app/schemas/__init__.py"
+    ],
+    "notes": [
+      "Checks run: `python -m compileall -q app` succeeded and `python -m ruff check app/schemas` was clean.",
+      "To get around the timeout I ran every test file separately with `-m \"not slow\"`: 164 tests, all passing. I don't know whether any other slow tests exist; none of them have been run.",
+      "The schemas only parse and normalise `expires_at`. The 'must be in the future' check is left to the service (WP-4, `InvalidInputError`), as the design specifies.",
+      "I added one small private helper, `_normalise_expiry`, so the create and PATCH bodies share the same normalisation code instead of repeating it.",
+      "As required, the module still imports nothing from other app packages; the architecture test passes."
+    ],
+    "open_issues": [
+      "The full suite, including the slow tests, needs a run in an environment with more time and normal CPU speed. That includes the p95 timing test (NFR-4) that failed here at 84 ms against 50 ms."
+    ]
+  }
+}

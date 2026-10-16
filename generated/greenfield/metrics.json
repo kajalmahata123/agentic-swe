@@ -1,0 +1,39 @@
+{
+  "events": 502,
+  "e2e_latency_s": 2735.71,
+  "nodes_succeeded": 19,
+  "nodes_failed": 0,
+  "attempts": 21,
+  "attempt_success_rate": 0.905,
+  "first_pass_yield": 0.947,
+  "retries": 1,
+  "failed_attempts": 2,
+  "failure_kinds": {
+    "gate": 2
+  },
+  "rollbacks": 1,
+  "mttr_s": 489.74,
+  "recoveries": 1,
+  "repair_loops": 1,
+  "replans": 0,
+  "reused_nodes": 0,
+  "safe_stops": 0,
+  "approvals_requested": 6,
+  "approvals_rejected": 0,
+  "approval_wait_s_avg": 118.74,
+  "policy_denials": 0,
+  "agent_turns": 125,
+  "llm_cost_usd": 8.924,
+  "input_tokens": 276,
+  "output_tokens": 227576,
+  "cache_hit_ratio": 1.0,
+  "stage_latency_s": {
+    "requirements": 88.9,
+    "design": 307.2,
+    "planning": 0.0,
+    "implementation": 544.43,
+    "documentation": 228.85,
+    "testing": 633.53,
+    "release": 0.16
+  }
+}

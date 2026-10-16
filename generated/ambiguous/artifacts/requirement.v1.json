@@ -1,0 +1,14 @@
+{
+  "name": "requirement",
+  "version": 1,
+  "hash": "fa2ff180ed44200d",
+  "producer": "intake",
+  "derived_from": {},
+  "value": {
+    "text": "Marketing is launching a big campaign next week and will put our short links on billboards and\nin a TV ad. Make the link service faster and more trustworthy before then.",
+    "scenario": "ambiguous",
+    "amendments": [],
+    "clarifications": {},
+    "clarification_rounds": 0
+  }
+}

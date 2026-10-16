@@ -1,0 +1,340 @@
+{
+  "name": "codebase_impact",
+  "version": 2,
+  "hash": "6abb8ecec1373cf8",
+  "producer": "impact_analysis",
+  "derived_from": {
+    "requirement": "723ea6b6ec105069",
+    "codebase_index": "274d0ad173e248d2"
+  },
+  "value": {
+    "summary": "Brownfield change to a layered FastAPI/SQLAlchemy URL shortener (165 tests pass, 99% coverage). The brief and amendment amd_5305a8421c78 add three things: (1) make the service faster and more reliable for a modest campaign (Q-1: about 50 RPS, redirect p95 under 100 ms, one instance) by hardening SQLite (Q-2: WAL, busy_timeout, configurable pool, no new driver, document the move to PostgreSQL); (2) links that stop working automatically at a set time (campaign end 31 Dec 23:59 UTC), so a new nullable `links.expires_at` column, a check in GET/HEAD /{code} on the redirect path, and new fields in the create and detail APIs; (3) clicks per hour per link for the TV ad slots, so a new hourly aggregation in StatsService/ClickRepository and a new endpoint. The biggest risk is the database schema: `Base.metadata.create_all` never alters existing tables, so adding `expires_at` to `Link` would make every query on `links` fail against the existing production `shortener.db`. That means 503 on every redirect unless an idempotent startup migration (or a documented manual ALTER) ships with the change. Today `create_db_engine` applies no SQLite tuning (no WAL, no explicit busy timeout, no pool settings). The docs (README, docs/API.md, docs/OPERATIONS.md, CHANGELOG) are out of date: they say there is no authentication, but `require_api_key` is in place.",
+    "architecture": [
+      {
+        "path": "app/main.py",
+        "responsibility": "Entry point. create_app(settings) builds Settings, the engine (create_db_engine) and the session factory, stored on app.state. The lifespan runs Base.metadata.create_all at startup and engine.dispose at shutdown. Registers error handlers and RequestLoggingMiddleware, then includes routers in the order health, links, redirect (the catch-all goes last). Module-level `app = create_app()`."
+      },
+      {
+        "path": "app/core/config.py",
+        "responsibility": "Pydantic-settings Settings read from env vars (DATABASE_URL, BASE_URL, SHORT_CODE_LENGTH, CODE_MAX_ATTEMPTS, IP_HASH_SALT, LOG_LEVEL, API_KEY), with validators. No module-level instance."
+      },
+      {
+        "path": "app/core/db.py",
+        "responsibility": "create_db_engine: SQLite gets only check_same_thread=False; other backends get pool_pre_ping. create_session_factory. get_db is the request-scoped session dependency and the single override point for tests."
+      },
+      {
+        "path": "app/core/errors.py",
+        "responsibility": "Domain exceptions (BadRequest 400, NotFound 404, Conflict 409, Gone 410, ServiceUnavailable 503) and JSON {\"detail\"} handlers. SQLAlchemyError maps to 503 and unhandled errors to a generic 500."
+      },
+      {
+        "path": "app/core/middleware.py, app/core/logging.py",
+        "responsibility": "JSON request log with method, path, status and duration_ms (never the client IP), plus a last-resort 500. JsonFormatter and configure_logging."
+      },
+      {
+        "path": "app/api/deps.py",
+        "responsibility": "get_settings, require_api_key (constant-time X-API-Key check, fails closed), get_link_service and get_stats_service (built per request from settings), build_short_url."
+      },
+      {
+        "path": "app/api/redirect.py",
+        "responsibility": "Public catch-all GET /{code} (307 plus a best-effort click via LinkService.resolve_and_record_click) and HEAD /{code} (resolve_for_redirect, no click). Builds a raw 307 Response with an exact Location header and Cache-Control: no-store."
+      },
+      {
+        "path": "app/api/links.py",
+        "responsibility": "Management router /api/links (API key required): POST create (Idempotency-Key), GET /{code} detail, DELETE /{code} soft delete, GET /{code}/stats?days=1..365. Maps service dataclasses to schemas."
+      },
+      {
+        "path": "app/api/health.py",
+        "responsibility": "/healthz (no database) and /readyz (SELECT 1, 503 on failure)."
+      },
+      {
+        "path": "app/services/link_service.py",
+        "responsibility": "Business rules for creating links (code generation retries, idempotency via a SHA-256 of the URL only), lookup, soft deactivation and redirect resolution (an is_active check that raises GoneError). Owns commit/rollback. Click recording is best-effort with rollback and logging. hash_ip uses HMAC-SHA256. No clock injection; it calls utcnow() directly."
+      },
+      {
+        "path": "app/services/stats_service.py",
+        "responsibility": "Read-only stats: total_clicks, clicks_per_day bucketed in Python over naive UTC timestamps (portable), top 10 referrers. Accepts an injectable `now` (tz-aware values are converted to UTC)."
+      },
+      {
+        "path": "app/services/codes.py",
+        "responsibility": "Base62 code generation with secrets, reserved words, format validation (^[A-Za-z0-9]{1,32}$)."
+      },
+      {
+        "path": "app/repositories/*.py",
+        "responsibility": "LinkRepository (get_by_code, add), ClickRepository (add, count_for_link, created_at_since, referrer_counts), IdempotencyRepository (get_by_key, add). They flush only and never commit."
+      },
+      {
+        "path": "app/models/*.py",
+        "responsibility": "DeclarativeBase models: Link(id, code UNIQUE, url, is_active, created_at, deactivated_at), ClickEvent(id, link_id FK, created_at, referrer, user_agent, ip_hash; index (link_id, created_at)), IdempotencyKey(key UNIQUE, request_hash, link_id, created_at). utcnow() returns naive UTC."
+      },
+      {
+        "path": "app/schemas/links.py, app/schemas/health.py",
+        "responsibility": "Pydantic v2 models: LinkCreate (strict URL validation), LinkCreatedResponse, LinkDetailResponse, DailyClicks, ReferrerCount, LinkStatsResponse, ErrorResponse, HealthResponse. _as_utc serialises naive datetimes as UTC. Imports nothing else from app."
+      },
+      {
+        "path": "tests/",
+        "responsibility": "Each test gets its own temporary SQLite database through the make_client fixture (create_app(Settings(...))). There are also AST-based architecture and security checks (layering, literal-only text(), no lru_cache/'cache' names, pinned requirements) and a slow perf test (redirect p95 < 50 ms, create p95 < 100 ms)."
+      }
+    ],
+    "impacted_files": [
+      {
+        "path": "app/core/db.py",
+        "change": "modify",
+        "reason": "Harden SQLite. Add a 'connect' event listener that sets PRAGMA journal_mode=WAL, synchronous=NORMAL and (optionally) foreign_keys=ON, using literal SQL only. Set the busy timeout through connect_args={'timeout': seconds}, the sqlite3 driver's busy handler, so no PRAGMA string has to be built with formatting. Apply pool settings (pool_size, max_overflow, pool_timeout) only to file-based SQLite and to other backends: in-memory 'sqlite://' uses SingletonThreadPool/StaticPool, which rejects max_overflow/pool_timeout (test_main_exposes_create_app_and_module_app uses 'sqlite://'). Add an idempotent schema upgrade helper that adds links.expires_at when the column is missing (inspect plus a literal ALTER TABLE ... ADD COLUMN)."
+      },
+      {
+        "path": "app/core/config.py",
+        "change": "modify",
+        "reason": "New validated settings, for example DB_POOL_SIZE, DB_MAX_OVERFLOW, DB_POOL_TIMEOUT, SQLITE_BUSY_TIMEOUT_MS (or seconds), SQLITE_WAL (bool), and possibly HOURLY_STATS_MAX_HOURS. Defaults must keep test_settings_defaults_and_env passing."
+      },
+      {
+        "path": "app/main.py",
+        "change": "modify",
+        "reason": "Pass the new pool and SQLite settings to create_db_engine. In the lifespan, run the idempotent schema upgrade (add expires_at) after create_all. Update the docstring."
+      },
+      {
+        "path": "app/models/link.py",
+        "change": "modify",
+        "reason": "Add `expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)` (naive UTC, portable sqltypes only, as test_orm_uses_declarative_base_and_portable_types requires). Consider an index if expiry queries or sweeps are added."
+      },
+      {
+        "path": "app/services/link_service.py",
+        "change": "modify",
+        "reason": "Add an expiry check (now >= expires_at means expired) to resolve_for_redirect and resolve_and_record_click (raise GoneError with a distinct detail such as 'Link has expired', and record no click). Accept an optional expires_at in create_link: it must be in the future, tz-aware input is converted to naive UTC, and it is included in the idempotency request_hash. Optionally add set_expiry for existing links. Inject a clock (a `now` callable or parameter) for deterministic tests. Optionally end the read transaction before inserting the click to avoid SQLite read-to-write lock upgrade failures (SQLITE_BUSY_SNAPSHOT in WAL)."
+      },
+      {
+        "path": "app/services/stats_service.py",
+        "change": "modify",
+        "reason": "Add get_hourly_clicks(code, start, end, now=None): validate the range (start < end, capped length), bucket timestamps by UTC hour in Python as the daily stats do, and return buckets sorted ascending (only hours with clicks, or zero-filled; decide and document). Works for deactivated and expired links."
+      },
+      {
+        "path": "app/repositories/click_repository.py",
+        "change": "modify",
+        "reason": "Add created_at_between(link_id, start, end) for half-open [start, end) ranges, served by ix_click_events_link_id_created_at."
+      },
+      {
+        "path": "app/repositories/link_repository.py",
+        "change": "modify",
+        "reason": "Optional: a helper to update expiry, or a bulk set-expiry by code list if the PO wants a campaign-wide expiry on existing links."
+      },
+      {
+        "path": "app/schemas/links.py",
+        "change": "modify",
+        "reason": "LinkCreate: optional `expires_at: datetime | None` (must be in the future; naive values treated as UTC). LinkCreatedResponse/LinkDetailResponse: add expires_at (serialised through _as_utc) and possibly is_expired. New HourlyClicks{hour: datetime (UTC, top of hour), count} and LinkHourlyStatsResponse. Optionally a LinkUpdate schema (PATCH expires_at). Keep LinkStatsResponse unchanged, because test_stats_shape_and_empty_link compares it exactly."
+      },
+      {
+        "path": "app/schemas/__init__.py",
+        "change": "modify",
+        "reason": "Export the new schema classes."
+      },
+      {
+        "path": "app/api/links.py",
+        "change": "modify",
+        "reason": "Pass expires_at through on create and return it on create and detail. New GET /api/links/{code}/stats/hourly?start=&end= (API key required, 422 on an invalid or oversized range). Optionally PATCH /api/links/{code} to set or clear expires_at on links that already exist. Update the OpenAPI responses (410 'Link has expired' on redirect)."
+      },
+      {
+        "path": "app/api/redirect.py",
+        "change": "modify",
+        "reason": "Document the 410 for expired links in the responses metadata. The behaviour comes from the service. HEAD must behave the same as GET."
+      },
+      {
+        "path": "tests/test_expiry.py",
+        "change": "add",
+        "reason": "Expiry tests: redirect works before expires_at; GET and HEAD return 410 at or after it, with no click recorded; validation on create (expiry in the past gives 422); tz conversion; idempotency with a different expires_at gives 409; schema upgrade on a database created without the column."
+      },
+      {
+        "path": "tests/test_hourly_stats.py",
+        "change": "add",
+        "reason": "Hourly bucketing across hour and UTC-day boundaries, range validation (422), deactivated and expired links still report, counts only for the requested link, fixed `now`."
+      },
+      {
+        "path": "tests/test_db_hardening.py",
+        "change": "add",
+        "reason": "Asserts PRAGMA journal_mode returns 'wal' on a file database, the busy timeout is applied, pool settings come from config, in-memory URLs still work, and concurrent redirects and creates on one file database lose no clicks and return no 503."
+      },
+      {
+        "path": "tests/test_config_openapi_architecture.py",
+        "change": "modify",
+        "reason": "Extend the settings defaults/env tests for the new settings and the OpenAPI checks for the new endpoint and schemas. The perf test may be aligned with the p95 < 100 ms target or kept stricter."
+      },
+      {
+        "path": "README.md",
+        "change": "modify",
+        "reason": "Add the new settings to the configuration table, plus expiry, hourly stats and the SQLite/WAL notes. Fix the stale 'no authentication' notice and add API_KEY to the configuration table."
+      },
+      {
+        "path": "docs/API.md",
+        "change": "modify",
+        "reason": "Document expires_at on create and detail, the 410 'Link has expired', the hourly stats endpoint and optional PATCH. Fix 'Authentication: none'."
+      },
+      {
+        "path": "docs/OPERATIONS.md",
+        "change": "modify",
+        "reason": "Cover the WAL files (-wal/-shm, backups), busy_timeout and pool tuning, the schema upgrade step, the campaign runbook (setting expiry, querying hourly stats), and the move to PostgreSQL for multi-worker or larger scale. Fix the stale 'No authentication (known gap)' security note."
+      },
+      {
+        "path": "CHANGELOG.md",
+        "change": "modify",
+        "reason": "Add an Unreleased entry for the features, the schema change and the hardening. Correct the security notes (API key auth exists)."
+      }
+    ],
+    "apis_affected": [
+      "GET /{code}: new 410 for expired links (no click recorded); latency affected by the SQLite tuning",
+      "HEAD /{code}: new 410 for expired links (same behaviour as GET)",
+      "POST /api/links: optional `expires_at` in the request; `expires_at` in the response; idempotency hash must cover expires_at",
+      "GET /api/links/{code}: `expires_at` (and possibly `is_expired`) in LinkDetailResponse",
+      "GET /api/links/{code}/stats/hourly (new): clicks per UTC hour for a bounded [start, end) range",
+      "PATCH /api/links/{code} (new, optional, PO decision): set or clear expires_at on existing campaign links",
+      "GET /api/links/{code}/stats: unchanged contract (must stay exactly as today)",
+      "GET /readyz: unchanged, but runs on the reconfigured engine",
+      "OpenAPI /openapi.json: new schemas and paths"
+    ],
+    "data_model_changes": [
+      "links: add nullable column `expires_at DATETIME` (naive UTC; NULL means never expires). Existing rows stay NULL, so behaviour does not change until expiry is set.",
+      "No new table is strictly needed for hourly stats: clicks per hour come from the existing click_events.created_at using the existing (link_id, created_at) index.",
+      "Schema migration: create_all does NOT add columns to existing tables and there is no Alembic. An idempotent startup migration (inspect columns, then a literal `ALTER TABLE links ADD COLUMN expires_at DATETIME`) or a documented manual step is required for existing databases.",
+      "Not a schema change but a database file change: SQLite journal_mode=WAL is stored in the database file and creates the -wal/-shm sidecar files."
+    ],
+    "data_flows": [
+      "Redirect hot path: GET /{code} -> RequestLoggingMiddleware -> redirect.redirect -> deps.get_link_service -> core.db.get_db (session from the engine pool, now WAL plus busy timeout) -> LinkService.resolve_and_record_click -> LinkRepository.get_by_code (indexed on code) -> [new] is_active and expires_at check against utcnow -> ClickRepository.add + commit (best-effort) -> raw 307 with Location and no-store",
+      "HEAD /{code} -> LinkService.resolve_for_redirect -> get_by_code -> [new] expiry check -> 307/404/410",
+      "Create: POST /api/links -> require_api_key -> LinkCreate validation ([new] expires_at in the future, converted to naive UTC) -> LinkService.create_link (request_hash now covers url and expires_at) -> LinkRepository.add / IdempotencyRepository.add -> commit -> LinkCreatedResponse (with expires_at)",
+      "Detail: GET /api/links/{code} -> LinkService.get_link_detail -> LinkDetailResponse (with expires_at)",
+      "Hourly stats (new): GET /api/links/{code}/stats/hourly -> require_api_key -> StatsService.get_hourly_clicks -> LinkRepository.get_by_code -> ClickRepository.created_at_between (index link_id, created_at) -> Python bucketing by UTC hour -> LinkHourlyStatsResponse",
+      "Startup: create_app -> create_db_engine (pool and SQLite pragmas via connect listener) -> lifespan: create_all -> [new] idempotent ALTER TABLE links ADD COLUMN expires_at if missing"
+    ],
+    "regression_areas": [
+      "Redirect semantics: 307 with the exact Location (not re-quoted), Cache-Control: no-store, 404 for unknown or malformed codes, 410 for deactivated links, HEAD records no click, a failed click insert still returns 307 (test_redirect_and_clicks.py)",
+      "Exact stats response shape: test_stats_shape_and_empty_link compares the whole body, so do not add fields to LinkStatsResponse; put hourly data on a separate endpoint",
+      "Idempotency: replay returns the stored state (including deactivated links), 409 on a different payload, race handling (test_idempotency.py). Changing request_hash must keep the 64-character hex length and keep replays of existing keys working (hash only the url when expires_at is absent, so stored hashes still match)",
+      "Settings defaults and validation (test_settings_defaults_and_env, test_settings_reject_invalid_values); conftest strips env vars, so any new env var must be added there",
+      "Engine creation for 'sqlite://' in-memory (test_main_exposes_create_app_and_module_app): pool kwargs must not be passed for in-memory SQLite",
+      "Static policy tests: text()/exec_driver_sql only with literal strings; no lru_cache or module-level 'cache' names (so no in-process redirect cache); layering (core must not import services/repositories; schemas import nothing from app); pinned requirements with no new driver",
+      "Portable column types only (no sqlalchemy.dialects) in models",
+      "Readiness probe and DB error handling (503 without leaking exception text) on the reconfigured engine",
+      "API key enforcement on every /api/links* route, including the new hourly/PATCH routes; redirect and probes stay public (test_auth.py)",
+      "Datetime serialisation: all timestamps returned as UTC with Z through _as_utc, including expires_at and the hourly bucket timestamps",
+      "Performance budget test (redirect p95 < 50 ms, create p95 < 100 ms) with the added expiry check and the WAL config"
+    ],
+    "existing_defects": [
+      {
+        "description": "The SQLite engine has no hardening: default rollback journal (no WAL), no explicit busy timeout, and SQLAlchemy's default pool size with no configuration. Concurrent creates and click inserts can hit 'database is locked', which OPERATIONS.md itself admits (sporadic 503s, lost clicks).",
+        "location": "app/core/db.py:create_db_engine",
+        "evidence": "`if database_url.startswith(\"sqlite\"): return create_engine(database_url, connect_args={\"check_same_thread\": False})`. There are no pragmas, connect listener or pool parameters, and no repository search hit for PRAGMA, journal or busy_timeout. OPERATIONS.md says 'The engine uses SQLAlchemy's default pool size' and has a 'SQLite \"database is locked\"' failure-mode section."
+      },
+      {
+        "description": "Links cannot expire: there is no expiry field and redirect resolution only checks is_active, so campaign links would keep redirecting after the campaign ends unless someone deletes each one by hand.",
+        "location": "app/models/link.py; app/services/link_service.py:resolve_for_redirect and resolve_and_record_click",
+        "evidence": "The Link columns are id, code, url, is_active, created_at and deactivated_at. Both resolve methods contain only `if not link.is_active: raise GoneError()`."
+      },
+      {
+        "description": "No hourly analytics: stats only bucket by UTC day, so clicks during a TV ad slot cannot be measured.",
+        "location": "app/services/stats_service.py:get_stats; app/schemas/links.py:LinkStatsResponse",
+        "evidence": "`per_day = Counter(ts.date() for ts in self.click_repo.created_at_since(link.id, since))`. LinkStatsResponse has only code, total_clicks, clicks_per_day and top_referrers."
+      },
+      {
+        "description": "Schema changes are never applied to existing databases: create_all only creates missing tables, and there is no migration tooling. Any model column addition breaks existing deployments.",
+        "location": "app/main.py:create_app lifespan",
+        "evidence": "`Base.metadata.create_all(bind=engine)` is the only schema step. OPERATIONS.md: 'Existing tables are **not** altered, and there is no migration tooling in this release.'"
+      },
+      {
+        "description": "The redirect read-then-write runs in one deferred SQLite transaction. Under concurrent writers this lock upgrade can fail (SQLITE_BUSY), and the failure is swallowed as a lost click, which makes click counts less reliable during spikes.",
+        "location": "app/services/link_service.py:resolve_and_record_click",
+        "evidence": "`link = self._get_or_404(code)` (an autobegun SELECT) is followed in the same session and transaction by `self.click_repo.add(...)` and `self.session.commit()`, and `except Exception: self.session.rollback(); logger.exception(\"failed to record click ...\")`."
+      },
+      {
+        "description": "The docs say there is no authentication, but the management API requires an X-API-Key (fail closed). The README configuration table also leaves out API_KEY. This misleads operators preparing the campaign.",
+        "location": "README.md (Security notice, Configuration table); docs/API.md ('Authentication: none in this release'); docs/OPERATIONS.md (Security notes 'No authentication (known gap)'); CHANGELOG.md ([1.0.0] Security)",
+        "evidence": "app/api/links.py declares `dependencies=[Depends(require_api_key)]`, and app/api/deps.py:require_api_key raises 401 when the key is missing, wrong or not configured. tests/test_auth.py covers this, yet the README says 'This release (1.0.0) has **no authentication**'."
+      },
+      {
+        "description": "Foreign keys are not enforced on SQLite: click_events.link_id has a ForeignKey, but PRAGMA foreign_keys is never turned on, so orphan click rows are possible.",
+        "location": "app/core/db.py; app/models/click_event.py",
+        "evidence": "`link_id: Mapped[int] = mapped_column(Integer, ForeignKey(\"links.id\"), nullable=False)`, and no connect listener sets `PRAGMA foreign_keys=ON`. This is low priority, but if the new connect listener enables it, check that tests never insert clicks for link ids that do not exist."
+      },
+      {
+        "description": "LinkService has no injectable clock (it calls utcnow() directly), so time-dependent rules such as expiry cannot be tested deterministically without monkeypatching.",
+        "location": "app/services/link_service.py (deactivate uses utcnow())",
+        "evidence": "`link.deactivated_at = utcnow()`. StatsService.get_stats accepts `now: datetime | None`, but LinkService has no equivalent."
+      }
+    ],
+    "risks": [
+      {
+        "id": "R-1",
+        "description": "Schema drift: adding Link.expires_at without a migration makes every SELECT on links fail with 'no such column' against the existing production shortener.db. That means a 503 on every redirect during the campaign. create_all does not alter existing tables.",
+        "likelihood": "high",
+        "impact": "high",
+        "mitigation": "Ship an idempotent startup upgrade in the lifespan (inspect the columns of links and run a literal ALTER TABLE ADD COLUMN only when expires_at is missing) and test it against a database created with the old schema. Document it in OPERATIONS.md and back up the database before deploying."
+      },
+      {
+        "id": "R-2",
+        "description": "The exact expiry instant and its semantics are ambiguous. '31 December, 23:59 UTC' could mean expiring at 23:59:00 or at the end of 23:59:59/24:00, and the year is not given. It is also unclear whether expiry is set per link or applies to all campaign links, and how the expiry gets onto campaign links that already exist.",
+        "likelihood": "medium",
+        "impact": "high",
+        "mitigation": "Use the rule 'expired when now >= expires_at' with the stored value set explicitly by the client (e.g. 2025-12-31T23:59:00Z, or 2026-01-01T00:00:00Z for the full minute). Ask the PO to confirm the instant and year. Provide a way (PATCH or set on create) to set expiry on links that already exist."
+      },
+      {
+        "id": "R-3",
+        "description": "Inconsistent expiry enforcement: GET and HEAD resolve through two separate service methods, so a check added to one may be missed in the other. Clicks could also be recorded for expired links.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Centralise the active/expiry check in one private helper used by both resolve methods. Test GET and HEAD at, before and after the boundary, and check that no click is recorded when the link is expired."
+      },
+      {
+        "id": "R-4",
+        "description": "Timezone errors: the stored timestamps are naive UTC. A tz-aware expires_at or hourly range compared with naive values raises TypeError (500), and local-time input may be misread.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Convert every input to naive UTC at the schema or service boundary (as StatsService already does with `now`), treat naive input as UTC, and test non-UTC offsets."
+      },
+      {
+        "id": "R-5",
+        "description": "Pool kwargs break in-memory SQLite: SingletonThreadPool/StaticPool reject max_overflow/pool_timeout, so create_app(Settings(database_url='sqlite://')) would raise.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Apply QueuePool settings only to file-based SQLite and non-SQLite URLs. Cover both cases with tests."
+      },
+      {
+        "id": "R-6",
+        "description": "SQLite write contention under burst traffic (e.g. a TV-ad spike). A redirect reads and then writes in one deferred transaction. In WAL mode, upgrading a read snapshot to a write can fail immediately with SQLITE_BUSY_SNAPSHOT, which ignores busy_timeout, so the click is lost (the redirect still succeeds). Without WAL, readers block writers.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Enable WAL with synchronous=NORMAL and a busy timeout through connect_args. End the read transaction (commit or rollback) before inserting the click, or start the write transaction directly. Run a single uvicorn worker. Add a concurrency test asserting no lost clicks at around 50 RPS. Document the move to PostgreSQL for multiple workers."
+      },
+      {
+        "id": "R-7",
+        "description": "Policy violation: building PRAGMA busy_timeout=<n> with an f-string breaks the 'no SQL by string formatting' rule and test_sql_text_only_receives_literal_strings.",
+        "likelihood": "medium",
+        "impact": "low",
+        "mitigation": "Set the busy timeout through the sqlite3 connect_args 'timeout' parameter. Use only literal PRAGMA statements in the connect listener."
+      },
+      {
+        "id": "R-8",
+        "description": "Unbounded hourly queries: a large [start, end) range on a popular link loads every timestamp into memory, which is slow and costly.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Cap the range (e.g. at most 7 or 31 days, configurable) and return 422 above it. Use the existing (link_id, created_at) index with a half-open range."
+      },
+      {
+        "id": "R-9",
+        "description": "Caching redirects for speed (in-process or downstream) would break immediate deactivation and expiry, under-count clicks for the TV-slot analytics, and fail the no-cache static test.",
+        "likelihood": "low",
+        "impact": "high",
+        "mitigation": "Keep Cache-Control: no-store and add no redirect cache. The SQLite tuning is enough for 50 RPS with p95 under 100 ms."
+      },
+      {
+        "id": "R-10",
+        "description": "Idempotency hash change: if request_hash starts covering expires_at in a way that changes the hash of url-only requests, replays of keys stored before the deploy return 409.",
+        "likelihood": "low",
+        "impact": "medium",
+        "mitigation": "Hash the url alone when expires_at is None and a canonical url+expires_at form otherwise. Test that pre-existing keys still replay."
+      },
+      {
+        "id": "R-11",
+        "description": "WAL operational effects: the -wal/-shm sidecar files need the database directory to be writable, copying only the .db file makes an incomplete backup, and WAL does not work on network filesystems.",
+        "likelihood": "low",
+        "impact": "medium",
+        "mitigation": "Document backups with sqlite3 .backup or a checkpoint, a writable local directory, and no NFS in OPERATIONS.md."
+      }
+    ]
+  }
+}

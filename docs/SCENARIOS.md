@@ -132,7 +132,7 @@ The seed is the released v1.0.0 repository from the greenfield run.
   and FR traceability complete, security 0 high (3 medium, 3 low).
 * **Metrics:** 22 attempts, 3 retries (all from the network faults), 1 rollback, 3 approvals,
   ≈ $13.13. Audit chain intact (514 events).
-* Summary: `demo-state/runs/run_2e7440e535cd/ENGINEERING_SUMMARY.md`.
+* Summary: [`generated/brownfield/`](../generated/brownfield/).
 
 ---
 
@@ -189,7 +189,7 @@ clicks per hour during the TV ad slots."* The orchestrator:
 * **Lineage** (`sdlc lineage run_9f7e81be929b release`): release ← release_readiness ←
   verification_report v2 ← design v2 ← requirements_spec v3 ← requirement **v3** (original
   brief → + clarification answers → + amendment).
-* Summary: `demo-state/runs/run_9f7e81be929b/ENGINEERING_SUMMARY.md`.
+* Summary: [`generated/ambiguous/`](../generated/ambiguous/).
 
 ---
 

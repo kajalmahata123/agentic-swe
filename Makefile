@@ -30,8 +30,9 @@ demo-video:       ## re-record docs/media/demo.mp4 from demo-state (playwright +
 	SDLC_HOME=.sdlc-demo $(PY) -m sdlc.cli dashboard --port 8791 & echo $$! > .demo-dash.pid; sleep 3; \
 	$(PY) scripts/record_demo.py --url http://127.0.0.1:8791 $(if $(NARRATE),--narrate,); status=$$?; kill $$(cat .demo-dash.pid); rm -f .demo-dash.pid; exit $$status
 
-snapshot:         ## refresh demo-state/ from your local .sdlc runs
+snapshot:         ## refresh demo-state/ (restorable) and generated/ (browsable) from your local .sdlc runs
 	$(PY) -m sdlc.cli snapshot --out demo-state
+	$(PY) -m sdlc.cli export --out generated
 
 dashboard:        ## oversight UI on http://127.0.0.1:8765
 	$(PY) -m sdlc.cli dashboard

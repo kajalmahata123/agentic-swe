@@ -1,0 +1,348 @@
+{
+  "name": "test_report",
+  "version": 1,
+  "hash": "85102742d8869749",
+  "producer": "tests",
+  "derived_from": {
+    "requirements_spec": "177a1306cb37a92f",
+    "design": "4546f8f39faeb8aa"
+  },
+  "value": {
+    "summary": "New test suite for the campaign-readiness change: 399 tests in total (165 existing ones kept, two settings tests only extended), 396 pass, 3 fail. The 3 failures encode two real product defects and were kept, not weakened. Coverage of app/ is 99.8% (908/910 lines; the only uncovered lines are the global 500 handler, which the request-logging middleware always catches first). conftest.py now strips SQLITE_BUSY_TIMEOUT_MS, DB_POOL_SIZE, DB_MAX_OVERFLOW and DB_POOL_TIMEOUT_SECONDS, registers the slow marker, and adds a `clock` fixture that freezes the service clock (LinkService._utcnow and the StatsService default now). The clock fixture is needed because the real date is 2026-10-16, so the campaign end 2025-12-31T23:59:00Z is already in the past. Existing tests were only extended: test_settings_defaults_and_env (new defaults and env overrides) and test_settings_reject_invalid_values (new invalid values). Every test docstring names its FR/NFR ids. The slow tests (50 RPS paced load, 16-thread burst, 200k-click daily and hourly stats) run in the default run and pass. tests/test_zz_debug.py is an empty placeholder left from debugging (no tests); it can be deleted.",
+    "test_files": [
+      "tests/conftest.py",
+      "tests/test_config_openapi_architecture.py",
+      "tests/test_probes_head.py",
+      "tests/test_db_tuning.py",
+      "tests/test_sqlite_locking.py",
+      "tests/test_query_budget.py",
+      "tests/test_link_expiry.py",
+      "tests/test_hourly_stats.py",
+      "tests/test_daily_stats_aggregation.py",
+      "tests/test_schema_upgrade.py",
+      "tests/test_docs.py",
+      "tests/test_perf_concurrency.py",
+      "tests/test_regression_contracts.py",
+      "tests/test_zz_debug.py"
+    ],
+    "fr_coverage": {
+      "FR-14": [
+        "test_head_healthz_200_empty_body_without_database",
+        "test_head_healthz_issues_no_sql_and_no_link_lookup",
+        "test_head_readyz_200_empty_body_runs_only_select_1",
+        "test_head_readyz_503_from_readiness_check_without_leak",
+        "test_get_probes_keep_status_and_bodies",
+        "test_post_probes_still_405",
+        "test_probes_head_are_public",
+        "test_head_code_active_307_exact_location_no_click",
+        "test_head_code_unknown_and_malformed_404",
+        "test_head_code_deactivated_and_expired_410_no_location",
+        "test_openapi_paths_change_only_by_patch_and_hourly",
+        "test_redirect_router_is_registered_last",
+        "test_api_doc_covers_new_endpoints_and_errors"
+      ],
+      "FR-15": [
+        "test_file_sqlite_connections_use_wal_normal_and_busy_timeout",
+        "test_app_engine_reports_pragmas_from_settings",
+        "test_default_busy_timeout_is_5000",
+        "test_sqlite_engine_kwargs_keep_check_same_thread_and_timeout",
+        "test_non_sqlite_engine_gets_pre_ping_and_pool_but_no_sqlite_pragmas",
+        "test_invalid_db_env_prevents_app_start",
+        "test_boundary_values_accepted",
+        "test_settings_reject_invalid_values",
+        "test_memory_sqlite_detection",
+        "test_in_memory_sqlite_ignores_pool_settings_and_starts",
+        "test_in_memory_sqlite_serves_link_requests_without_error",
+        "test_get_redirect_under_held_write_lock_returns_307_quickly",
+        "test_head_deactivated_and_expired_under_held_write_lock",
+        "test_reads_not_blocked_by_held_write_lock",
+        "test_click_recorded_after_lock_released",
+        "test_each_successful_get_persists_exactly_one_click_visible_immediately",
+        "test_click_insert_operational_error_still_307_rolls_back_and_logs",
+        "test_click_commit_operational_error_still_307_and_no_click",
+        "test_lookup_failure_returns_503_without_internal_details",
+        "test_lookup_on_unavailable_links_table_returns_503",
+        "test_operations_doc_lookup_failure_returns_503",
+        "test_test_databases_run_in_wal_mode"
+      ],
+      "FR-16": [
+        "test_settings_defaults_and_env",
+        "test_settings_reject_invalid_values",
+        "test_invalid_db_env_prevents_app_start",
+        "test_conftest_strips_new_env_vars",
+        "test_file_sqlite_pool_matches_settings",
+        "test_default_pool_matches_sqlalchemy_defaults",
+        "test_non_sqlite_engine_gets_pre_ping_and_pool_but_no_sqlite_pragmas",
+        "test_in_memory_sqlite_ignores_pool_settings_and_starts",
+        "test_in_memory_sqlite_serves_link_requests_without_error",
+        "test_engine_and_settings_created_per_app",
+        "test_no_module_level_engine_settings_or_pool",
+        "test_describe_engine_for_server_dialect_has_no_sqlite_fields",
+        "test_log_engine_tuning_for_memory_sqlite_has_null_pool_fields",
+        "test_main_exposes_create_app_and_module_app"
+      ],
+      "FR-17": [
+        "test_successful_get_one_select_one_insert_one_commit",
+        "test_redirect_lookup_selects_only_needed_columns",
+        "test_head_one_select_no_insert_no_commit",
+        "test_malformed_code_issues_no_sql",
+        "test_unknown_deactivated_expired_one_select_no_insert",
+        "test_expiry_check_adds_no_query_for_unexpired_link",
+        "test_location_byte_identical_to_stored_url"
+      ],
+      "FR-18": [
+        "test_repository_returns_one_row_per_day_not_per_click",
+        "test_per_click_timestamp_api_removed",
+        "test_stats_service_does_not_materialise_click_rows",
+        "test_empty_referrer_grouped_as_null",
+        "test_null_referrer_sorted_last_on_ties",
+        "test_daily_window_edges_with_fixed_now",
+        "test_daily_bucketing_exact_for_sub_millisecond_timestamps",
+        "test_daily_stats_for_expired_link",
+        "test_daily_bucket_compiles_for_all_dialects",
+        "test_daily_stats_200k_clicks_fast_and_bounded_memory",
+        "test_expired_link_keeps_detail_and_stats",
+        "test_bucket_normalisers_accept_driver_specific_values"
+      ],
+      "FR-19": [
+        "test_mysql_ddl_declares_binary_collation_for_code",
+        "test_sqlite_ddl_matches_baseline_plus_expires_at",
+        "test_postgresql_ddl_matches_baseline_plus_expires_at",
+        "test_operations_doc_has_mysql_alter_statement",
+        "test_sqlite_codes_case_sensitive"
+      ],
+      "FR-20": [
+        "test_docs_describe_api_key_auth",
+        "test_readme_lists_every_settings_env_var",
+        "test_api_doc_covers_new_endpoints_and_errors",
+        "test_operations_doc_covers_wal_backups_locking_pool_and_upgrade",
+        "test_operations_doc_lookup_failure_returns_503",
+        "test_campaign_deployment_section",
+        "test_scaling_beyond_campaign_section",
+        "test_changelog_unreleased_records_all_changes",
+        "test_operations_doc_has_mysql_alter_statement"
+      ],
+      "FR-21": [
+        "test_test_databases_run_in_wal_mode",
+        "test_redirect_contract_unchanged_for_null_expiry_links",
+        "test_first_get_and_head_after_delete_are_410",
+        "test_idempotency_replay_conflict_and_race_on_wal",
+        "test_collision_retry_and_exhaustion_on_wal",
+        "test_database_errors_on_new_routes_return_generic_503",
+        "test_unknown_errors_on_new_routes_return_generic_500",
+        "test_click_truncation_still_applies",
+        "test_detail_body_only_extended_with_expiry_fields",
+        "test_replay_pointing_at_missing_link_returns_409_not_500",
+        "test_get_probes_keep_status_and_bodies",
+        "test_post_probes_still_405",
+        "test_probes_head_are_public",
+        "test_head_code_active_307_exact_location_no_click",
+        "test_head_code_unknown_and_malformed_404",
+        "test_patch_requires_api_key",
+        "test_hourly_requires_api_key",
+        "test_pre_deploy_url_only_key_replays_without_expires_at",
+        "test_null_expires_at_never_expires",
+        "test_upgrade_old_schema_database_end_to_end",
+        "test_lookup_failure_returns_503_without_internal_details",
+        "test_each_successful_get_persists_exactly_one_click_visible_immediately",
+        "test_location_byte_identical_to_stored_url",
+        "test_sqlite_codes_case_sensitive",
+        "test_docs_describe_api_key_auth",
+        "test_empty_referrer_grouped_as_null"
+      ],
+      "FR-22": [
+        "test_expiry_boundary_with_injected_clock",
+        "test_expiry_checked_every_request_never_cached",
+        "test_deactivated_and_expired_returns_deactivated_detail",
+        "test_null_expires_at_never_expires",
+        "test_expired_link_keeps_detail_and_stats",
+        "test_openapi_documents_expired_410_on_redirect",
+        "test_patching_shared_helper_clock_affects_get_and_head",
+        "test_get_and_head_share_check_redirectable_helper",
+        "test_service_injectable_clock_unit",
+        "test_expired_redirect_logs_no_ip",
+        "test_head_code_deactivated_and_expired_410_no_location",
+        "test_unknown_deactivated_expired_one_select_no_insert",
+        "test_expiry_check_adds_no_query_for_unexpired_link",
+        "test_head_deactivated_and_expired_under_held_write_lock",
+        "test_patch_sets_future_expiry_and_redirect_follows",
+        "test_hourly_for_deactivated_and_expired_links",
+        "test_daily_stats_for_expired_link"
+      ],
+      "FR-23": [
+        "test_create_with_expires_at_z",
+        "test_create_without_expires_at_returns_null",
+        "test_create_normalises_offsets_to_utc",
+        "test_create_with_past_or_now_expiry_returns_422",
+        "test_create_one_microsecond_in_future_accepted",
+        "test_create_with_non_datetime_expiry_returns_422",
+        "test_create_with_out_of_range_offset_returns_422_not_500",
+        "test_idempotent_replay_same_instant_different_notation",
+        "test_idempotency_conflict_when_expiry_differs",
+        "test_pre_deploy_url_only_key_replays_without_expires_at",
+        "test_request_hash_is_64_hex_with_and_without_expiry",
+        "test_replay_after_stored_expiry_returns_stored_link_unchanged",
+        "test_openapi_schemas_include_expiry_fields",
+        "test_service_create_and_set_expiry_raise_invalid_input",
+        "test_response_schemas_serialise_aware_datetimes_as_utc_z",
+        "test_detail_body_only_extended_with_expiry_fields"
+      ],
+      "FR-24": [
+        "test_patch_sets_future_expiry_and_redirect_follows",
+        "test_patch_null_clears_expiry_and_revives_expired_link",
+        "test_patch_extends_expired_link",
+        "test_patch_invalid_returns_422_and_keeps_stored_value",
+        "test_patch_non_json_body_returns_422",
+        "test_patch_requires_api_key",
+        "test_patch_unknown_or_malformed_code_404",
+        "test_patch_on_deactivated_link_updates_but_stays_410",
+        "test_patch_changes_only_expires_at",
+        "test_patch_normalises_offsets",
+        "test_openapi_documents_patch",
+        "test_openapi_schemas_include_expiry_fields",
+        "test_service_create_and_set_expiry_raise_invalid_input",
+        "test_openapi_paths_change_only_by_patch_and_hourly"
+      ],
+      "FR-25": [
+        "test_hourly_example_half_open_buckets",
+        "test_hourly_zero_filled_ascending",
+        "test_hourly_across_utc_day_boundary",
+        "test_hourly_bucketing_exact_for_sub_millisecond_timestamps",
+        "test_hourly_offset_start_and_alignment",
+        "test_hourly_offsets_and_rounding",
+        "test_hourly_counts_only_requested_link",
+        "test_hourly_default_range_is_25_buckets_ending_with_current_hour",
+        "test_hourly_service_default_range_with_injected_now",
+        "test_hourly_invalid_ranges_return_422",
+        "test_hourly_domain_422_details_are_strings",
+        "test_hourly_exactly_744_hours_allowed",
+        "test_hourly_unknown_or_malformed_code_404",
+        "test_hourly_requires_api_key",
+        "test_hourly_for_deactivated_and_expired_links",
+        "test_hourly_logs_no_ip_and_returns_only_aggregates",
+        "test_hourly_service_validation_unit",
+        "test_hourly_repository_returns_only_nonzero_buckets",
+        "test_hour_bucket_compiles_for_all_dialects",
+        "test_openapi_documents_hourly_endpoint",
+        "test_hourly_200k_clicks_fast_and_bounded_memory"
+      ],
+      "FR-26": [
+        "test_upgrade_old_schema_database_end_to_end",
+        "test_second_startup_is_noop",
+        "test_fresh_database_gets_column_from_create_all_without_alter",
+        "test_upgrade_failure_aborts_startup_with_logged_error",
+        "test_ensure_links_expires_at_unit_returns_flag",
+        "test_postgresql_branch_uses_timestamp_without_time_zone",
+        "test_upgrade_code_lives_in_core_and_is_called_from_lifespan",
+        "test_startup_logs_one_tuning_line_and_one_schema_line"
+      ],
+      "NFR-10": [
+        "test_paced_50_rps_mixed_load"
+      ],
+      "NFR-11": [
+        "test_performance_p95_redirect_and_create",
+        "test_paced_50_rps_mixed_load"
+      ],
+      "NFR-12": [
+        "test_get_redirect_under_held_write_lock_returns_307_quickly",
+        "test_click_insert_operational_error_still_307_rolls_back_and_logs",
+        "test_click_commit_operational_error_still_307_and_no_click",
+        "test_click_failure_with_failing_rollback_still_307",
+        "test_click_recorded_after_lock_released",
+        "test_unpaced_burst_16_threads"
+      ],
+      "NFR-13": [
+        "test_repository_returns_one_row_per_day_not_per_click",
+        "test_stats_service_does_not_materialise_click_rows",
+        "test_daily_stats_200k_clicks_fast_and_bounded_memory",
+        "test_hourly_200k_clicks_fast_and_bounded_memory",
+        "test_hourly_repository_returns_only_nonzero_buckets",
+        "test_hourly_query_uses_link_created_at_index"
+      ],
+      "NFR-14": [
+        "test_get_redirect_under_held_write_lock_returns_307_quickly",
+        "test_click_insert_operational_error_still_307_rolls_back_and_logs",
+        "test_click_commit_operational_error_still_307_and_no_click",
+        "test_expired_redirect_logs_no_ip",
+        "test_hourly_logs_no_ip_and_returns_only_aggregates"
+      ],
+      "NFR-15": [
+        "test_head_healthz_200_empty_body_without_database",
+        "test_head_readyz_503_from_readiness_check_without_leak",
+        "test_expiry_boundary_with_injected_clock",
+        "test_patch_requires_api_key",
+        "test_hourly_requires_api_key",
+        "test_startup_log_never_contains_database_password_or_api_key",
+        "test_startup_logs_one_tuning_line_and_one_schema_line",
+        "test_lookup_failure_returns_503_without_internal_details",
+        "test_database_errors_on_new_routes_return_generic_503",
+        "test_unknown_errors_on_new_routes_return_generic_500"
+      ],
+      "NFR-16": [
+        "test_startup_logs_one_tuning_line_and_one_schema_line",
+        "test_startup_log_never_contains_database_password_or_api_key",
+        "test_describe_engine_for_server_dialect_has_no_sqlite_fields",
+        "test_log_engine_tuning_for_memory_sqlite_has_null_pool_fields"
+      ],
+      "NFR-17": [
+        "test_requirements_pinned_and_no_new_runtime_dependency",
+        "test_no_module_level_engine_settings_or_pool",
+        "test_upgrade_code_lives_in_core_and_is_called_from_lifespan",
+        "test_layered_architecture_dependencies_point_inward"
+      ],
+      "NFR-18": [
+        "test_sqlite_ddl_matches_baseline_plus_expires_at",
+        "test_postgresql_ddl_matches_baseline_plus_expires_at",
+        "test_other_tables_ddl_unchanged",
+        "test_upgrade_old_schema_database_end_to_end"
+      ],
+      "NFR-19": [
+        "test_unpaced_burst_16_threads"
+      ],
+      "NFR-20": [
+        "test_campaign_deployment_section"
+      ],
+      "NFR-21": [
+        "test_hourly_200k_clicks_fast_and_bounded_memory",
+        "test_hourly_query_uses_link_created_at_index"
+      ],
+      "NFR-22": [
+        "test_expiry_boundary_with_injected_clock",
+        "test_expiry_checked_every_request_never_cached",
+        "test_create_normalises_offsets_to_utc",
+        "test_create_with_past_or_now_expiry_returns_422",
+        "test_create_one_microsecond_in_future_accepted",
+        "test_create_with_out_of_range_offset_returns_422_not_500",
+        "test_patch_normalises_offsets",
+        "test_patch_invalid_returns_422_and_keeps_stored_value",
+        "test_hourly_offset_start_and_alignment",
+        "test_hourly_offsets_and_rounding",
+        "test_hourly_invalid_ranges_return_422",
+        "test_hourly_bucketing_exact_for_sub_millisecond_timestamps",
+        "test_service_injectable_clock_unit",
+        "test_response_schemas_serialise_aware_datetimes_as_utc_z"
+      ]
+    },
+    "defects_found": [
+      {
+        "description": "Hourly stats put clicks in the wrong UTC hour on SQLite when the timestamp is within the last half-millisecond of an hour (FR-25, NFR-22). hour_bucket_expression('sqlite') uses strftime('%Y-%m-%d %H:00:00', created_at), and SQLite rounds fractional seconds to milliseconds. A click stored at 2025-12-31 23:59:59.999999 (or anything from .9995) is bucketed as '2026-01-01 23:00:00': the date rolls over but the hour stays 23, so the click lands 24 hours late. It is then missing from the requested range and from total_clicks (the expected 23:00Z count is 2, the actual is 1). In other hours such clicks move into the next hour. Clicks are stored with microsecond precision from utcnow(), so this happens in production, roughly one click in 7,200. Daily stats are not affected (tested). A possible fix is to strip fractional seconds before bucketing (for example strftime over substr(created_at, 1, 19)) or to bucket in Python.",
+        "location": "app/repositories/click_repository.py: hour_bucket_expression (sqlite branch)",
+        "failing_test": "tests/test_hourly_stats.py::test_hourly_bucketing_exact_for_sub_millisecond_timestamps"
+      },
+      {
+        "description": "In-memory SQLite URLs cannot serve link requests (FR-15 / FR-16). FR-15 requires that for 'sqlite://' and ':memory:' the app 'starts and serves requests without error'. The app starts and /healthz and /readyz return 200, but POST /api/links returns 503 because of 'sqlite3.OperationalError: no such table: links'. create_db_engine passes only check_same_thread=False for in-memory URLs, so SQLAlchemy uses SingletonThreadPool. That gives each thread its own in-memory database: the tables created by create_all on the lifespan thread are invisible to the request worker threads. This behaviour predates this change, but the new acceptance criterion requires it to work. Likely fix: use poolclass=StaticPool for in-memory SQLite (still without QueuePool kwargs).",
+        "location": "app/core/db.py: create_db_engine (in-memory SQLite branch)",
+        "failing_test": "tests/test_db_tuning.py::test_in_memory_sqlite_serves_link_requests_without_error"
+      }
+    ],
+    "pytest": {
+      "code": 1,
+      "passed": 396,
+      "failed": 3,
+      "errors": 0,
+      "skipped": 0,
+      "coverage": 99.78,
+      "output": "... [earlier output truncated]\n_repo.add(link)\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.sdlc/runs/run_9f7e81be929b/worktrees/tests-a1/app/repositories/link_repository.py\", line 58, in add\n    self.session.flush()\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/orm/session.py\", line 4536, in flush\n    self._flush(objects)\n  File \"<sqlalchemy generated warned() wrapper for sqlalchemy.orm.session.Session._flush>\", line 2, in _flush\n    return target(fn, self, objects=objects)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/util/deprecations.py\", line 281, in warned\n    return fn(*args, **kwargs)  # type: ignore[no-any-return]\n           ^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/orm/session.py\", line 4679, in _flush\n    with util.safe_reraise():\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py\", line 166, in __exit__\n    raise exc_value.with_traceback(exc_tb)\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/orm/session.py\", line 4640, in _flush\n    flush_context.execute()\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/orm/unitofwork.py\", line 467, in execute\n    rec.execute(self)\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/orm/unitofwork.py\", line 643, in execute\n    util.preloaded.orm_persistence._save_obj(\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/orm/persistence.py\", line 92, in _save_obj\n    _emit_insert_statements(\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/orm/persistence.py\", line 1237, in _emit_insert_statements\n    result = connection.execute(\n             ^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py\", line 1451, in execute\n    return meth(\n           ^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/sql/elements.py\", line 533, in _execute_on_connection\n    return connection._execute_clauseelement(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py\", line 1671, in _execute_clauseelement\n    ret = self._execute_context(\n          ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py\", line 1825, in _execute_context\n    return self._exec_single_context(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py\", line 1965, in _exec_single_context\n    self._handle_dbapi_exception(\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py\", line 2335, in _handle_dbapi_exception\n    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py\", line 1946, in _exec_single_context\n    self.dialect.do_execute(\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/default.py\", line 1192, in do_execute\n    cursor.execute(statement, parameters)\nsqlalchemy.exc.OperationalError: (sqlite3.OperationalError) no such table: links\n[SQL: INSERT INTO links (code, url, is_active, created_at, deactivated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)]\n[parameters: ('RGyUcsH', 'https://example.com/mem', 1, '2026-10-16 03:27:24.012941', None, None)]\n(Background on this error at: https://sqlalche.me/e/21/e3q8)\nINFO     app.request:middleware.py:31 request\n__________ test_hourly_bucketing_exact_for_sub_millisecond_timestamps __________\n\nclient = <starlette.testclient.TestClient object at 0x10b604a50>\nlink = ('HBmaK8z', 1)\n\n    def test_hourly_bucketing_exact_for_sub_millisecond_timestamps(client, link):\n        \"\"\"Covers: FR-25, NFR-22\n    \n        Clicks are stored with microsecond precision (``utcnow()``). A click at\n        23:59:59.999999 belongs to the 23:00 bucket of the same UTC day, and every click\n        inside [start, end) must be counted in total_clicks.\n        \"\"\"\n        code, link_id = link\n        _insert_clicks(\n            client,\n            link_id,\n            [datetime(2025, 12, 31, 23, 0), datetime(2025, 12, 31, 23, 59, 59, 999999),\n             datetime(2026, 1, 1, 0, 0), datetime(2026, 1, 1, 0, 30),\n             datetime(2026, 1, 1, 0, 59, 59, 999700)],\n        )\n        body = _hourly(client, code, start=\"2025-12-31T22:00:00Z\", end=\"2026-01-01T02:00:00Z\").json()\n>       assert body[\"clicks_per_hour\"] == [\n            {\"hour\": \"2025-12-31T22:00:00Z\", \"count\": 0},\n            {\"hour\": \"2025-12-31T23:00:00Z\", \"count\": 2},\n            {\"hour\": \"2026-01-01T00:00:00Z\", \"count\": 3},\n            {\"hour\": \"2026-01-01T01:00:00Z\", \"count\": 0},\n        ]\nE       AssertionError: assert [{'hour': '20..., 'count': 0}] == [{'hour': '20..., 'count': 0}]\nE         \nE         At index 1 diff: {'hour': '2025-12-31T23:00:00Z', 'count': 1} != {'hour': '2025-12-31T23:00:00Z', 'count': 2}\nE         Use -v to get more diff\n\ntests/test_hourly_stats.py:124: AssertionError\n---------------------------- Captured stderr setup -----------------------------\n{\"ts\": \"2026-10-16T03:27:24.983729+00:00\", \"level\": \"INFO\", \"logger\": \"app.db\", \"message\": \"schema upgrade: links.expires_at already present\", \"schema_upgrade\": \"already_present\"}\n{\"ts\": \"2026-10-16T03:27:24.984229+00:00\", \"level\": \"INFO\", \"logger\": \"app.db\", \"message\": \"database tuning dialect=sqlite pool_class=QueuePool pool_size=5 max_overflow=10 pool_timeout=30.0 journal_mode=wal synchronous=1 busy_timeout_ms=5000\", \"dialect\": \"sqlite\", \"pool_class\": \"QueuePool\", \"pool_size\": 5, \"max_overflow\": 10, \"pool_timeout\": 30.0, \"journal_mode\": \"wal\", \"synchronous\": 1, \"busy_timeout_ms\": 5000}\n{\"ts\": \"2026-10-16T03:27:25.016963+00:00\", \"level\": \"INFO\", \"logger\": \"app.request\", \"message\": \"request\", \"method\": \"POST\", \"path\": \"/api/links\", \"status\": 201, \"duration_ms\": 30.8}\n------------------------------ Captured log setup ------------------------------\nINFO     app.db:schema.py:26 schema upgrade: links.expires_at already present\nINFO     app.db:db.py:115 database tuning dialect=sqlite pool_class=QueuePool pool_size=5 max_overflow=10 pool_timeout=30.0 journal_mode=wal synchronous=1 busy_timeout_ms=5000\nINFO     app.request:middleware.py:31 request\n----------------------------- Captured stderr call -----------------------------\n{\"ts\": \"2026-10-16T03:27:25.032178+00:00\", \"level\": \"INFO\", \"logger\": \"app.request\", \"message\": \"request\", \"method\": \"GET\", \"path\": \"/api/links/HBmaK8z/stats/hourly\", \"status\": 200, \"duration_ms\": 7.7}\n------------------------------ Captured log call -------------------------------\nINFO     app.request:middleware.py:31 request\n================================ tests coverage ================================\n_______________ coverage: platform darwin, python 3.11.9-final-0 _______________\n\nCoverage JSON written to file coverage.json\n=========================== short test summary info ============================\nFAILED tests/test_db_tuning.py::test_in_memory_sqlite_serves_link_requests_without_error[sqlite://]\nFAILED tests/test_db_tuning.py::test_in_memory_sqlite_serves_link_requests_without_error[sqlite:///:memory:]\nFAILED tests/test_hourly_stats.py::test_hourly_bucketing_exact_for_sub_millisecond_timestamps\n3 failed, 396 passed in 79.21s (0:01:19)"
+    }
+  }
+}

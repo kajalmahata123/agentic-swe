@@ -8,7 +8,7 @@ from sdlc.domain.models import RunStatus
 from sdlc.engine.bootstrap import create_run, execute, load_context, open_store, runs_dir
 from sdlc.engine.context import RunConfig
 from sdlc.governance.audit import AuditLog
-from sdlc.snapshot import restore, snapshot
+from sdlc.snapshot import export_runs, restore, snapshot
 from tests.conftest import HumanBot
 from tests.fake_agents import build_provider
 
@@ -43,3 +43,22 @@ def test_snapshot_restore_round_trip(sdlc_home, tmp_path, monkeypatch):
     )
     assert "app/api.py" in diff.stdout  # per-node diffs still resolve
     assert "v0.1.0" in subprocess.run(["git", "tag"], cwd=repo, capture_output=True, text=True).stdout
+
+
+def test_export_produces_browsable_run_folders(sdlc_home, tmp_path):
+    store = open_store()
+    scenario = {"name": "greenfield", "mode": "greenfield", "requirement": "Build a URL shortener."}
+    run_id = create_run(store, scenario, RunConfig(model="fake", approve_mode="auto"))
+    ctx = load_context(store, run_id, provider=build_provider(inject_faults=False, ambiguous=False))
+    ctx.approvals.poll_s = 0.05
+    with HumanBot(store, ctx.policy):
+        assert execute(ctx) == RunStatus.SUCCEEDED
+
+    out = tmp_path / "generated"
+    assert export_runs(sdlc_home, out) == ["greenfield"]
+    run = out / "greenfield"
+    assert (run / "code" / "app" / "main.py").exists() and not (run / "code" / ".git").exists()
+    assert (run / "artifacts" / "design.v1.json").exists()
+    assert (run / "audit_log.jsonl").read_text().count("\n") > 50
+    assert "release_gate" in (run / "README.md").read_text()
+    assert "greenfield" in (out / "README.md").read_text()

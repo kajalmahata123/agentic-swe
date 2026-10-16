@@ -1,0 +1,96 @@
+{
+  "name": "verification_report",
+  "version": 1,
+  "hash": "b78e12c410a9787c",
+  "producer": "verify",
+  "derived_from": {
+    "design": "4546f8f39faeb8aa",
+    "requirements_spec": "177a1306cb37a92f",
+    "test_report": "85102742d8869749"
+  },
+  "value": {
+    "head": "947f0fdc8e61aa5dfc341509bac64fb980e88ddc",
+    "gates": [
+      {
+        "name": "compile",
+        "passed": true,
+        "detail": "ok",
+        "severity": "block"
+      },
+      {
+        "name": "lint_correctness",
+        "passed": true,
+        "detail": "All checks passed!",
+        "severity": "block"
+      },
+      {
+        "name": "tests_pass",
+        "passed": false,
+        "detail": "396 passed, 3 failed, 0 errors\n 1237, in _emit_insert_statements\n    result = connection.execute(\n             ^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py\", line 1451, in execute\n    return meth(\n           ^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/sql/elements.py\", line 533, in _execute_on_connection\n    return connection._execute_clauseelement(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py\", line 1671, in _execute_clauseelement\n    ret = self._execute_context(\n          ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py\", line 1825, in _execute_context\n    return self._exec_single_context(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py\", line 1965, in _exec_single_context\n    self._handle_dbapi_exception(\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py\", line 2335, in _handle_dbapi_exception\n    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py\", line 1946, in _exec_single_context\n    self.dialect.do_execute(\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/default.py\", line 1192, in do_execute\n    cursor.execute(statement, parameters)\nsqlalchemy.exc.OperationalError: (sqlite3.OperationalError) no such table: links\n[SQL: INSERT INTO links (code, url, is_active, created_at, deactivated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)]\n[parameters: ('GSDTCvw', 'https://example.com/mem', 1, '2026-10-16 03:28:50.325200', None, None)]\n(Background on this error at: https://sqlalche.me/e/21/e3q8)\nINFO     app.request:middleware.py:31 request\n__________ test_hourly_bucketing_exact_for_sub_millisecond_timestamps __________\n\nclient = <starlette.testclient.TestClient object at 0x10d9e2610>\nlink = ('9443lJS', 1)\n\n    def test_hourly_bucketing_exact_for_sub_millisecond_timestamps(client, link):\n        \"\"\"Covers: FR-25, NFR-22\n    \n        Clicks are stored with microsecond precision (``utcnow()``). A click at\n        23:59:59.999999 belongs to the 23:00 bucket of the same UTC day, and every click\n        inside [start, end) must be counted in total_clicks.\n        \"\"\"\n        code, link_id = link\n        _insert_clicks(\n            client,\n            link_id,\n            [datetime(2025, 12, 31, 23, 0), datetime(2025, 12, 31, 23, 59, 59, 999999),\n             datetime(2026, 1, 1, 0, 0), datetime(2026, 1, 1, 0, 30),\n             datetime(2026, 1, 1, 0, 59, 59, 999700)],\n        )\n        body = _hourly(client, code, start=\"2025-12-31T22:00:00Z\", end=\"2026-01-01T02:00:00Z\").json()\n>       assert body[\"clicks_per_hour\"] == [\n            {\"hour\": \"2025-12-31T22:00:00Z\", \"count\": 0},\n            {\"hour\": \"2025-12-31T23:00:00Z\", \"count\": 2},\n            {\"hour\": \"2026-01-01T00:00:00Z\", \"count\": 3},\n            {\"hour\": \"2026-01-01T01:00:00Z\", \"count\": 0},\n        ]\nE       AssertionError: assert [{'hour': '20..., 'count': 0}] == [{'hour': '20..., 'count': 0}]\nE         \nE         At index 1 diff: {'hour': '2025-12-31T23:00:00Z', 'count': 1} != {'hour': '2025-12-31T23:00:00Z', 'count': 2}\nE         Use -v to get more diff\n\ntests/test_hourly_stats.py:124: AssertionError\n---------------------------- Captured stderr setup -----------------------------\n{\"ts\": \"2026-10-16T03:28:51.323128+00:00\", \"level\": \"INFO\", \"logger\": \"app.db\", \"message\": \"schema upgrade: links.expires_at already present\", \"schema_upgrade\": \"already_present\"}\n{\"ts\": \"2026-10-16T03:28:51.323606+00:00\", \"level\": \"INFO\", \"logger\": \"app.db\", \"message\": \"database tuning dialect=sqlite pool_class=QueuePool pool_size=5 max_overflow=10 pool_timeout=30.0 journal_mode=wal synchronous=1 busy_timeout_ms=5000\", \"dialect\": \"sqlite\", \"pool_class\": \"QueuePool\", \"pool_size\": 5, \"max_overflow\": 10, \"pool_timeout\": 30.0, \"journal_mode\": \"wal\", \"synchronous\": 1, \"busy_timeout_ms\": 5000}\n{\"ts\": \"2026-10-16T03:28:51.356334+00:00\", \"level\": \"INFO\", \"logger\": \"app.request\", \"message\": \"request\", \"method\": \"POST\", \"path\": \"/api/links\", \"status\": 201, \"duration_ms\": 30.54}\n------------------------------ Captured log setup ------------------------------\nINFO     app.db:schema.py:26 schema upgrade: links.expires_at already present\nINFO     app.db:db.py:115 database tuning dialect=sqlite pool_class=QueuePool pool_size=5 max_overflow=10 pool_timeout=30.0 journal_mode=wal synchronous=1 busy_timeout_ms=5000\nINFO     app.request:middleware.py:31 request\n----------------------------- Captured stderr call -----------------------------\n{\"ts\": \"2026-10-16T03:28:51.373129+00:00\", \"level\": \"INFO\", \"logger\": \"app.request\", \"message\": \"request\", \"method\": \"GET\", \"path\": \"/api/links/9443lJS/stats/hourly\", \"status\": 200, \"duration_ms\": 9.74}\n------------------------------ Captured log call -------------------------------\nINFO     app.request:middleware.py:31 request\n================================ tests coverage ================================\n_______________ coverage: platform darwin, python 3.11.9-final-0 _______________\n\nCoverage JSON written to file coverage.json\n=========================== short test summary info ============================\nFAILED tests/test_db_tuning.py::test_in_memory_sqlite_serves_link_requests_without_error[sqlite://]\nFAILED tests/test_db_tuning.py::test_in_memory_sqlite_serves_link_requests_without_error[sqlite:///:memory:]\nFAILED tests/test_hourly_stats.py::test_hourly_bucketing_exact_for_sub_millisecond_timestamps\n3 failed, 396 passed in 80.42s (0:01:20)",
+        "severity": "block"
+      },
+      {
+        "name": "coverage",
+        "passed": true,
+        "detail": "99.78% (minimum 80.0%)",
+        "severity": "block"
+      },
+      {
+        "name": "api_contract",
+        "passed": true,
+        "detail": "9 contract endpoints implemented",
+        "severity": "block"
+      },
+      {
+        "name": "requirements_traceability",
+        "passed": true,
+        "detail": "11 must-FRs traced",
+        "severity": "block"
+      },
+      {
+        "name": "policy_scan_full_tree",
+        "passed": true,
+        "detail": "1 non-blocking findings",
+        "severity": "block"
+      }
+    ],
+    "passed": false,
+    "tests": {
+      "code": 1,
+      "passed": 396,
+      "failed": 3,
+      "errors": 0,
+      "skipped": 0,
+      "coverage": 99.78,
+      "output": "... [earlier output truncated]\n   self.link_repo.add(link)\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.sdlc/runs/run_9f7e81be929b/repo/app/repositories/link_repository.py\", line 58, in add\n    self.session.flush()\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/orm/session.py\", line 4536, in flush\n    self._flush(objects)\n  File \"<sqlalchemy generated warned() wrapper for sqlalchemy.orm.session.Session._flush>\", line 2, in _flush\n    return target(fn, self, objects=objects)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/util/deprecations.py\", line 281, in warned\n    return fn(*args, **kwargs)  # type: ignore[no-any-return]\n           ^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/orm/session.py\", line 4679, in _flush\n    with util.safe_reraise():\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py\", line 166, in __exit__\n    raise exc_value.with_traceback(exc_tb)\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/orm/session.py\", line 4640, in _flush\n    flush_context.execute()\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/orm/unitofwork.py\", line 467, in execute\n    rec.execute(self)\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/orm/unitofwork.py\", line 643, in execute\n    util.preloaded.orm_persistence._save_obj(\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/orm/persistence.py\", line 92, in _save_obj\n    _emit_insert_statements(\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/orm/persistence.py\", line 1237, in _emit_insert_statements\n    result = connection.execute(\n             ^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py\", line 1451, in execute\n    return meth(\n           ^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/sql/elements.py\", line 533, in _execute_on_connection\n    return connection._execute_clauseelement(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py\", line 1671, in _execute_clauseelement\n    ret = self._execute_context(\n          ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py\", line 1825, in _execute_context\n    return self._exec_single_context(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py\", line 1965, in _exec_single_context\n    self._handle_dbapi_exception(\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py\", line 2335, in _handle_dbapi_exception\n    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py\", line 1946, in _exec_single_context\n    self.dialect.do_execute(\n  File \"/Users/kajalmahata/Alpha_AI_Products/agentic_sdlc/.venv/lib/python3.11/site-packages/sqlalchemy/engine/default.py\", line 1192, in do_execute\n    cursor.execute(statement, parameters)\nsqlalchemy.exc.OperationalError: (sqlite3.OperationalError) no such table: links\n[SQL: INSERT INTO links (code, url, is_active, created_at, deactivated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)]\n[parameters: ('GSDTCvw', 'https://example.com/mem', 1, '2026-10-16 03:28:50.325200', None, None)]\n(Background on this error at: https://sqlalche.me/e/21/e3q8)\nINFO     app.request:middleware.py:31 request\n__________ test_hourly_bucketing_exact_for_sub_millisecond_timestamps __________\n\nclient = <starlette.testclient.TestClient object at 0x10d9e2610>\nlink = ('9443lJS', 1)\n\n    def test_hourly_bucketing_exact_for_sub_millisecond_timestamps(client, link):\n        \"\"\"Covers: FR-25, NFR-22\n    \n        Clicks are stored with microsecond precision (``utcnow()``). A click at\n        23:59:59.999999 belongs to the 23:00 bucket of the same UTC day, and every click\n        inside [start, end) must be counted in total_clicks.\n        \"\"\"\n        code, link_id = link\n        _insert_clicks(\n            client,\n            link_id,\n            [datetime(2025, 12, 31, 23, 0), datetime(2025, 12, 31, 23, 59, 59, 999999),\n             datetime(2026, 1, 1, 0, 0), datetime(2026, 1, 1, 0, 30),\n             datetime(2026, 1, 1, 0, 59, 59, 999700)],\n        )\n        body = _hourly(client, code, start=\"2025-12-31T22:00:00Z\", end=\"2026-01-01T02:00:00Z\").json()\n>       assert body[\"clicks_per_hour\"] == [\n            {\"hour\": \"2025-12-31T22:00:00Z\", \"count\": 0},\n            {\"hour\": \"2025-12-31T23:00:00Z\", \"count\": 2},\n            {\"hour\": \"2026-01-01T00:00:00Z\", \"count\": 3},\n            {\"hour\": \"2026-01-01T01:00:00Z\", \"count\": 0},\n        ]\nE       AssertionError: assert [{'hour': '20..., 'count': 0}] == [{'hour': '20..., 'count': 0}]\nE         \nE         At index 1 diff: {'hour': '2025-12-31T23:00:00Z', 'count': 1} != {'hour': '2025-12-31T23:00:00Z', 'count': 2}\nE         Use -v to get more diff\n\ntests/test_hourly_stats.py:124: AssertionError\n---------------------------- Captured stderr setup -----------------------------\n{\"ts\": \"2026-10-16T03:28:51.323128+00:00\", \"level\": \"INFO\", \"logger\": \"app.db\", \"message\": \"schema upgrade: links.expires_at already present\", \"schema_upgrade\": \"already_present\"}\n{\"ts\": \"2026-10-16T03:28:51.323606+00:00\", \"level\": \"INFO\", \"logger\": \"app.db\", \"message\": \"database tuning dialect=sqlite pool_class=QueuePool pool_size=5 max_overflow=10 pool_timeout=30.0 journal_mode=wal synchronous=1 busy_timeout_ms=5000\", \"dialect\": \"sqlite\", \"pool_class\": \"QueuePool\", \"pool_size\": 5, \"max_overflow\": 10, \"pool_timeout\": 30.0, \"journal_mode\": \"wal\", \"synchronous\": 1, \"busy_timeout_ms\": 5000}\n{\"ts\": \"2026-10-16T03:28:51.356334+00:00\", \"level\": \"INFO\", \"logger\": \"app.request\", \"message\": \"request\", \"method\": \"POST\", \"path\": \"/api/links\", \"status\": 201, \"duration_ms\": 30.54}\n------------------------------ Captured log setup ------------------------------\nINFO     app.db:schema.py:26 schema upgrade: links.expires_at already present\nINFO     app.db:db.py:115 database tuning dialect=sqlite pool_class=QueuePool pool_size=5 max_overflow=10 pool_timeout=30.0 journal_mode=wal synchronous=1 busy_timeout_ms=5000\nINFO     app.request:middleware.py:31 request\n----------------------------- Captured stderr call -----------------------------\n{\"ts\": \"2026-10-16T03:28:51.373129+00:00\", \"level\": \"INFO\", \"logger\": \"app.request\", \"message\": \"request\", \"method\": \"GET\", \"path\": \"/api/links/9443lJS/stats/hourly\", \"status\": 200, \"duration_ms\": 9.74}\n------------------------------ Captured log call -------------------------------\nINFO     app.request:middleware.py:31 request\n================================ tests coverage ================================\n_______________ coverage: platform darwin, python 3.11.9-final-0 _______________\n\nCoverage JSON written to file coverage.json\n=========================== short test summary info ============================\nFAILED tests/test_db_tuning.py::test_in_memory_sqlite_serves_link_requests_without_error[sqlite://]\nFAILED tests/test_db_tuning.py::test_in_memory_sqlite_serves_link_requests_without_error[sqlite:///:memory:]\nFAILED tests/test_hourly_stats.py::test_hourly_bucketing_exact_for_sub_millisecond_timestamps\n3 failed, 396 passed in 80.42s (0:01:20)"
+    },
+    "coverage": 99.78,
+    "contract": {
+      "missing": [],
+      "undocumented": []
+    },
+    "traceability": {
+      "FR-14": true,
+      "FR-15": true,
+      "FR-16": true,
+      "FR-18": true,
+      "FR-20": true,
+      "FR-21": true,
+      "FR-22": true,
+      "FR-23": true,
+      "FR-24": true,
+      "FR-25": true,
+      "FR-26": true
+    },
+    "policy_findings": [
+      {
+        "rule": "CHG-001",
+        "title": "protected path modified (change control)",
+        "severity": "approve",
+        "path": "requirements.txt",
+        "line": null,
+        "snippet": ""
+      }
+    ]
+  }
+}

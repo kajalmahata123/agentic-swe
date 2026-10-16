@@ -1,0 +1,629 @@
+{
+  "name": "design",
+  "version": 1,
+  "hash": "69d249761c25951f",
+  "producer": "design",
+  "derived_from": {
+    "requirements_spec": "f9e39c09ed667d11"
+  },
+  "value": {
+    "overview": "Greenfield FastAPI URL shortener built in layers: app/api (routers, HTTP concerns, DI wiring) -> app/services (business rules, transaction ownership) -> app/repositories (SQLAlchemy 2.0 ORM queries; flush only, never commit) -> app/models (DeclarativeBase/Mapped). Pydantic v2 schemas are in app/schemas. Config, the DB engine/session, domain errors plus handlers, structured logging and the request middleware are in app/core.\n\n`create_app(settings: Settings | None = None)` builds a fresh Settings, engine and sessionmaker for each app instance and stores them on app.state. Tests therefore get an isolated temporary SQLite DB just by passing Settings(database_url=...). The app holds no global engine and no in-memory state, which satisfies NFR-9. Tables are created with Base.metadata.create_all inside the app lifespan at startup.\n\nRoutes are registered in this order: health router (/healthz, /readyz), then the links router (prefix /api/links), then the redirect router (GET/HEAD /{code}) last, so the catch-all never shadows fixed routes. /docs, /redoc and /openapi.json are registered by FastAPI at construction time, so they also come before the catch-all.\n\nShort codes are 7-character base62 strings from `secrets`. A DB unique constraint backs them, a failed flush (IntegrityError) triggers a retry, and reserved words are rejected. Idempotency uses an idempotency_keys table with a unique key and a SHA-256 hash of the request. The key row is inserted in the same transaction as the link.\n\nThe redirect returns a raw 307 Response, so Location is byte-exact, with Cache-Control: no-store. It records a click on a best-effort basis: on failure it logs and still redirects. The raw IP is never stored. ip_hash holds the HMAC-SHA256 of request.client.host keyed by IP_HASH_SALT, or null when no salt is set.\n\nStats: total_clicks is all-time. clicks_per_day covers a window of N UTC days and is aggregated in Python (portable across databases). top_referrers is all-time, computed by SQL GROUP BY and then sorted deterministically in Python.\n\nEvery error is JSON {\"detail\": ...}. Domain exceptions map to 400/404/409/410/503, SQLAlchemyError maps to 503, and anything unhandled becomes {\"detail\": \"Internal Server Error\"} with the traceback logged server-side only.",
+    "components": [
+      {
+        "name": "Core: configuration",
+        "responsibility": "pydantic-settings Settings class covering DATABASE_URL, BASE_URL, SHORT_CODE_LENGTH, CODE_MAX_ATTEMPTS, IP_HASH_SALT and LOG_LEVEL.",
+        "files": [
+          "app/core/config.py"
+        ]
+      },
+      {
+        "name": "Core: database",
+        "responsibility": "Engine factory with SQLite check_same_thread=False, a sessionmaker factory, and the get_db request dependency that reads the session factory from request.app.state.",
+        "files": [
+          "app/core/db.py"
+        ]
+      },
+      {
+        "name": "Core: errors",
+        "responsibility": "Framework-agnostic domain exceptions (AppError hierarchy) plus register_exception_handlers(app), which maps AppError, HTTPException, RequestValidationError, SQLAlchemyError and Exception to JSON {detail}.",
+        "files": [
+          "app/core/errors.py"
+        ]
+      },
+      {
+        "name": "Core: logging & middleware",
+        "responsibility": "JSON log formatter and configure_logging(level). RequestLoggingMiddleware writes one log line per request (method, path, status, duration_ms, never the client IP) and is the last-resort catch-all that turns an exception into a generic 500.",
+        "files": [
+          "app/core/logging.py",
+          "app/core/middleware.py"
+        ]
+      },
+      {
+        "name": "Models",
+        "responsibility": "SQLAlchemy 2.0 ORM entities Link, ClickEvent and IdempotencyKey, with the Base declarative class and a utcnow() helper. Imports nothing from outer layers.",
+        "files": [
+          "app/models/base.py",
+          "app/models/link.py",
+          "app/models/click_event.py",
+          "app/models/idempotency_key.py",
+          "app/models/__init__.py"
+        ]
+      },
+      {
+        "name": "Repositories",
+        "responsibility": "Persistence access through the ORM with bound parameters only. Repositories flush and never commit.",
+        "files": [
+          "app/repositories/link_repository.py",
+          "app/repositories/click_repository.py",
+          "app/repositories/idempotency_repository.py",
+          "app/repositories/__init__.py"
+        ]
+      },
+      {
+        "name": "Schemas",
+        "responsibility": "Pydantic v2 request/response models plus strict target-URL validation (FR-2).",
+        "files": [
+          "app/schemas/links.py",
+          "app/schemas/health.py",
+          "app/schemas/__init__.py"
+        ]
+      },
+      {
+        "name": "Services",
+        "responsibility": "Business rules: code generation and reserved words, link creation with collision retry and idempotency, lookup, deactivation, redirect resolution with click recording and IP hashing, and stats aggregation. Services own commit/rollback and import nothing from FastAPI.",
+        "files": [
+          "app/services/codes.py",
+          "app/services/link_service.py",
+          "app/services/stats_service.py",
+          "app/services/__init__.py"
+        ]
+      },
+      {
+        "name": "API",
+        "responsibility": "Routers for links management, redirect and health probes; DI providers; mapping of ORM/service results to response schemas (including short_url).",
+        "files": [
+          "app/api/deps.py",
+          "app/api/links.py",
+          "app/api/redirect.py",
+          "app/api/health.py",
+          "app/api/__init__.py"
+        ]
+      },
+      {
+        "name": "App factory",
+        "responsibility": "create_app(settings=None) wires settings, logging, engine, lifespan create_all, exception handlers, middleware and routers in the correct order. Also exposes a module-level app.",
+        "files": [
+          "app/main.py"
+        ]
+      }
+    ],
+    "api_contract": [
+      {
+        "method": "POST",
+        "path": "/api/links",
+        "summary": "Create a short link. An optional Idempotency-Key header makes the request idempotent.",
+        "request": "JSON body LinkCreate {\"url\": string}. Must be a strict string, 1-2048 chars, absolute http/https (scheme case-insensitive) with a non-empty host, with no whitespace, control or non-ASCII characters. Optional header Idempotency-Key: 1-255 chars, not blank.",
+        "responses": {
+          "201": "LinkCreatedResponse {code, short_url, url, is_active, created_at}. Header Location: /api/links/{code}. On replay (same key and same url) the body is identical to the original and the header Idempotent-Replayed: true is added. The first response omits that header.",
+          "400": "{\"detail\": \"Invalid Idempotency-Key header\"}: the header is empty/blank or longer than 255 chars.",
+          "409": "{\"detail\": \"Idempotency-Key already used with a different payload\"}: no link is created.",
+          "422": "{\"detail\": [...pydantic errors]}: missing/invalid body or an invalid URL. Nothing is persisted.",
+          "503": "{\"detail\": \"Could not allocate a unique short code, please retry\"} after all CODE_MAX_ATTEMPTS collided. Also {\"detail\": \"Service temporarily unavailable\"} on a DB error."
+        },
+        "fr_ids": [
+          "FR-1",
+          "FR-2",
+          "FR-3",
+          "FR-4",
+          "FR-11",
+          "FR-13"
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/api/links/{code}",
+        "summary": "Get link metadata, including for deactivated links.",
+        "request": "Path code (any string; anything not matching ^[A-Za-z0-9]{1,32}$ is treated as not found).",
+        "responses": {
+          "200": "LinkDetailResponse {code, short_url, url, is_active, created_at, deactivated_at (null if active), total_clicks: int}",
+          "404": "{\"detail\": \"Link not found\"}"
+        },
+        "fr_ids": [
+          "FR-1",
+          "FR-6",
+          "FR-11",
+          "FR-13"
+        ]
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/links/{code}",
+        "summary": "Soft-delete (deactivate) a link. Idempotent.",
+        "request": "Path code.",
+        "responses": {
+          "204": "No body. Sets is_active=false and deactivated_at=now (UTC) the first time. Repeat calls return 204 and leave deactivated_at unchanged.",
+          "404": "{\"detail\": \"Link not found\"}"
+        },
+        "fr_ids": [
+          "FR-7",
+          "FR-11",
+          "FR-13"
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/api/links/{code}/stats",
+        "summary": "Aggregated click stats for a link (active or deactivated).",
+        "request": "Path code. Query days: int, default 30, ge=1, le=365.",
+        "responses": {
+          "200": "LinkStatsResponse {code, total_clicks: int (all-time), clicks_per_day: [{date: 'YYYY-MM-DD', count}] ascending, only days with clicks, last `days` UTC calendar days including today; top_referrers: [{referrer: string|null, count}] all-time, count desc then referrer asc (null after non-null on ties), max 10}",
+          "404": "{\"detail\": \"Link not found\"}",
+          "422": "{\"detail\": [...]}: days is outside 1-365 or not an integer"
+        },
+        "fr_ids": [
+          "FR-9",
+          "FR-11",
+          "FR-13"
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/{code}",
+        "summary": "Redirect to the original URL and record a click event. (HEAD /{code} is also implemented with the same status and Location, without recording a click, and is hidden from the schema.)",
+        "request": "Path code. Headers Referer and User-Agent are optional and recorded after truncation.",
+        "responses": {
+          "307": "Empty body. Location equals the stored URL exactly. Cache-Control: no-store. One click event is recorded (best-effort).",
+          "404": "{\"detail\": \"Link not found\"}: no click is recorded",
+          "410": "{\"detail\": \"Link has been deactivated\"}: no click is recorded"
+        },
+        "fr_ids": [
+          "FR-5",
+          "FR-8",
+          "FR-11",
+          "FR-13"
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/healthz",
+        "summary": "Liveness probe. Does not touch the database.",
+        "request": "",
+        "responses": {
+          "200": "HealthResponse {\"status\": \"ok\"}"
+        },
+        "fr_ids": [
+          "FR-10",
+          "FR-13"
+        ]
+      },
+      {
+        "method": "GET",
+        "path": "/readyz",
+        "summary": "Readiness probe. Runs SELECT 1 through the get_db session.",
+        "request": "",
+        "responses": {
+          "200": "HealthResponse {\"status\": \"ready\"}",
+          "503": "{\"detail\": \"Database is not ready\"} (or \"Service temporarily unavailable\" when the session dependency itself raises a SQLAlchemyError). No exception text."
+        },
+        "fr_ids": [
+          "FR-10",
+          "FR-11",
+          "FR-13"
+        ]
+      }
+    ],
+    "data_model": [
+      {
+        "name": "Link (table: links)",
+        "fields": [
+          {
+            "name": "id",
+            "type": "Integer",
+            "constraints": "primary key, autoincrement"
+          },
+          {
+            "name": "code",
+            "type": "String(32)",
+            "constraints": "NOT NULL, UNIQUE (uq_links_code)"
+          },
+          {
+            "name": "url",
+            "type": "String(2048)",
+            "constraints": "NOT NULL, stored exactly as submitted"
+          },
+          {
+            "name": "is_active",
+            "type": "Boolean",
+            "constraints": "NOT NULL, default True"
+          },
+          {
+            "name": "created_at",
+            "type": "DateTime (naive, UTC)",
+            "constraints": "NOT NULL, default utcnow()"
+          },
+          {
+            "name": "deactivated_at",
+            "type": "DateTime (naive, UTC)",
+            "constraints": "NULL"
+          }
+        ],
+        "indexes": [
+          "UNIQUE uq_links_code (code)"
+        ]
+      },
+      {
+        "name": "ClickEvent (table: click_events)",
+        "fields": [
+          {
+            "name": "id",
+            "type": "Integer",
+            "constraints": "primary key, autoincrement"
+          },
+          {
+            "name": "link_id",
+            "type": "Integer",
+            "constraints": "NOT NULL, ForeignKey('links.id')"
+          },
+          {
+            "name": "created_at",
+            "type": "DateTime (naive, UTC)",
+            "constraints": "NOT NULL, default utcnow()"
+          },
+          {
+            "name": "referrer",
+            "type": "String(2048)",
+            "constraints": "NULL, truncated to 2048 chars"
+          },
+          {
+            "name": "user_agent",
+            "type": "String(512)",
+            "constraints": "NULL, truncated to 512 chars"
+          },
+          {
+            "name": "ip_hash",
+            "type": "String(64)",
+            "constraints": "NULL; hex HMAC-SHA256(IP_HASH_SALT, client ip); NULL when no salt. There is NO raw-IP column."
+          }
+        ],
+        "indexes": [
+          "ix_click_events_link_id_created_at (link_id, created_at)"
+        ]
+      },
+      {
+        "name": "IdempotencyKey (table: idempotency_keys)",
+        "fields": [
+          {
+            "name": "id",
+            "type": "Integer",
+            "constraints": "primary key, autoincrement"
+          },
+          {
+            "name": "key",
+            "type": "String(255)",
+            "constraints": "NOT NULL, UNIQUE (uq_idempotency_keys_key)"
+          },
+          {
+            "name": "request_hash",
+            "type": "String(64)",
+            "constraints": "NOT NULL; sha256 hex of the submitted url (UTF-8)"
+          },
+          {
+            "name": "link_id",
+            "type": "Integer",
+            "constraints": "NOT NULL, ForeignKey('links.id')"
+          },
+          {
+            "name": "created_at",
+            "type": "DateTime (naive, UTC)",
+            "constraints": "NOT NULL, default utcnow()"
+          }
+        ],
+        "indexes": [
+          "UNIQUE uq_idempotency_keys_key (key)"
+        ]
+      }
+    ],
+    "decisions": [
+      {
+        "id": "ADR-1",
+        "title": "Strict layering with services owning transactions",
+        "decision": "Routers in app/api depend only on services, schemas and core. Services accept a SQLAlchemy Session plus plain config values, use repositories, and alone call commit()/rollback(). Repositories only add/flush/query. Models import only sqlalchemy. Domain exceptions live in app/core/errors.py, which keeps services free of FastAPI imports.",
+        "rationale": "Meets NFR-6, makes services unit-testable without HTTP, and puts the transaction boundaries needed for the retry/replay logic (NFR-5) in one place.",
+        "alternatives": [
+          "Fat routers that call the ORM directly",
+          "Unit-of-work abstraction (unnecessary for this size)"
+        ]
+      },
+      {
+        "id": "ADR-2",
+        "title": "Random base62 codes backed by a DB unique constraint and retry",
+        "decision": "codes.generate_code(length) uses secrets.choice over [A-Za-z0-9]. The service inserts and flushes. On IntegrityError it rolls back and retries with a new code, up to CODE_MAX_ATTEMPTS (default 5). A reserved candidate (compared case-insensitively against RESERVED_CODES) uses up an attempt and is regenerated. When attempts run out the service raises a 503.",
+        "rationale": "With 62^7 \u2248 3.5e12 codes collisions are rare. The DB constraint guarantees uniqueness across instances (NFR-5, NFR-9). Codes are unguessable (NFR-2, R-1).",
+        "alternatives": [
+          "Hash of the URL (deterministic, enables enumeration, conflicts with the no-dedup rule)",
+          "Sequential ID encoded in base62 (guessable)",
+          "Pre-check with SELECT before insert (racy without the constraint anyway)"
+        ]
+      },
+      {
+        "id": "ADR-3",
+        "title": "Idempotency via a table with a unique key and request hash, written in the link's transaction",
+        "decision": "If the key exists: a matching request_hash replays the stored link (201, Idempotent-Replayed: true), and a different hash returns 409. Otherwise the link is inserted and flushed, then the key row is inserted and flushed in the same transaction, then the transaction commits. An IntegrityError on the key flush (a concurrent winner) rolls back both rows, after which the service re-reads the key and replays or returns 409. Keys are global and never expire (Q-3). Replays are rebuilt from the stored link row.",
+        "rationale": "The DB constraint guarantees at most one link per key even with concurrent requests or several instances (FR-4, R-7). It never returns 500.",
+        "alternatives": [
+          "Store the full response body JSON",
+          "In-memory cache (violates NFR-9)",
+          "Key expiry after 24h (deferred)"
+        ]
+      },
+      {
+        "id": "ADR-4",
+        "title": "App factory with a per-app engine on app.state",
+        "decision": "create_app(settings=None) builds Settings() when none are given, creates the engine and sessionmaker, and stores settings, engine and session_factory on app.state. get_db(request) and get_settings(request) read from app.state. Tables are created by Base.metadata.create_all(engine) in the lifespan startup, and the engine is disposed on shutdown.",
+        "rationale": "Each test gets an isolated DB by passing Settings(database_url=tmp). There are no import-time side effects and no global mutable state (NFR-7, NFR-9).",
+        "alternatives": [
+          "Module-level global engine with dependency overrides",
+          "lru_cache'd get_settings (stale across tests)",
+          "Alembic migrations (out of scope)"
+        ]
+      },
+      {
+        "id": "ADR-5",
+        "title": "Naive-UTC timestamps and Python-side day bucketing",
+        "decision": "All DateTime columns are portable naive DateTime values holding UTC (models.base.utcnow() = datetime.now(timezone.utc).replace(tzinfo=None)). Response schemas convert to tz-aware UTC on output. clicks_per_day fetches only created_at for rows in the window and groups by .date() in Python. top_referrers uses SQL GROUP BY referrer, followed by a deterministic Python sort and a cut to 10.",
+        "rationale": "Avoids database-specific date functions and NULL ordering differences (R-6, FR-12), and gives identical serialization for replays.",
+        "alternatives": [
+          "func.date() GROUP BY in SQL (return type differs per DB)",
+          "timezone-aware columns (SQLite drops tzinfo anyway)"
+        ]
+      },
+      {
+        "id": "ADR-6",
+        "title": "Raw 307 Response for redirects; ASCII-only target URLs",
+        "decision": "The redirect handler returns Response(status_code=307, headers={'Location': url, 'Cache-Control': 'no-store'}) instead of starlette's RedirectResponse, which percent-quotes the URL. URL validation additionally rejects non-ASCII characters (clients must send punycode or percent-encoded URLs).",
+        "rationale": "FR-5 requires Location to equal the stored URL exactly. Response headers are latin-1 encoded, so non-ASCII would otherwise cause 500s.",
+        "alternatives": [
+          "RedirectResponse (alters the URL)",
+          "Normalize/IDNA-encode on input (violates the store-unchanged assumption)"
+        ]
+      },
+      {
+        "id": "ADR-7",
+        "title": "Centralized JSON error handling with a middleware catch-all",
+        "decision": "AppError subclasses carry status_code and detail: BadRequestError 400, NotFoundError 404, ConflictError 409, GoneError 410, ServiceUnavailableError 503. Handlers are registered for AppError, StarletteHTTPException (404/405, keeping headers such as Allow), RequestValidationError (422), SQLAlchemyError (503 'Service temporarily unavailable', logged), and Exception (500). RequestLoggingMiddleware also wraps call_next in try/except: an exception is logged with its traceback and answered with 500 {\"detail\": \"Internal Server Error\"}.",
+        "rationale": "Meets FR-11 and NFR-3: error bodies never contain exception text, and DB outages become 503 rather than 500.",
+        "alternatives": [
+          "Per-route try/except",
+          "Relying on FastAPI defaults (the 500 is plain text)"
+        ]
+      },
+      {
+        "id": "ADR-8",
+        "title": "Synchronous, best-effort click recording",
+        "decision": "After resolving an active link, the service inserts a ClickEvent and commits in its own small transaction. Any exception rolls back and is logged (logger.exception, without the IP), and the 307 is still returned. HEAD requests never record clicks.",
+        "rationale": "Q-5 default: the redirect must not fail because of analytics (FR-8, R-4). HEAD is not a real visit.",
+        "alternatives": [
+          "Background tasks / async queue (out of scope)",
+          "Failing the redirect when recording fails"
+        ]
+      },
+      {
+        "id": "ADR-9",
+        "title": "No authentication in this iteration",
+        "decision": "The /api/links router has no auth dependency, but is structured so that a future Depends(require_api_key) can be added at router level without changing the contract.",
+        "rationale": "Q-1 default; tracked as a risk.",
+        "alternatives": [
+          "Static X-API-Key",
+          "Per-user accounts"
+        ]
+      },
+      {
+        "id": "ADR-10",
+        "title": "Readiness via the shared get_db dependency",
+        "decision": "/readyz declares db: Session = Depends(get_db) and runs db.execute(text('SELECT 1')) inside try/except Exception, raising ServiceUnavailableError('Database is not ready') on failure. If an overridden get_db itself raises a SQLAlchemyError, the global SQLAlchemyError handler returns 503 too.",
+        "rationale": "Tests can simulate a DB outage through app.dependency_overrides[get_db] (FR-10). No exception text is leaked.",
+        "alternatives": [
+          "Probe via app.state.engine directly (overrides would not apply)"
+        ]
+      }
+    ],
+    "risks": [
+      {
+        "id": "RK-1",
+        "description": "Without authentication anyone who knows a code can deactivate a link or read its stats (Q-1).",
+        "likelihood": "medium",
+        "impact": "high",
+        "mitigation": "Codes are high-entropy. The router is ready for an API-key dependency. Escalate before public launch."
+      },
+      {
+        "id": "RK-2",
+        "description": "The catch-all GET /{code} could shadow fixed routes, or test-added routes registered after it.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Register the redirect router last in create_app. The reserved-word list is applied in code generation. Tests that add ad-hoc routes must use multi-segment paths such as /_test/boom, which /{code} cannot match."
+      },
+      {
+        "id": "RK-3",
+        "description": "SQLite 'database is locked' errors under concurrent writes.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "check_same_thread=False, short transactions, best-effort click recording, SQLAlchemyError mapped to 503. Recommend Postgres via DATABASE_URL for production."
+      },
+      {
+        "id": "RK-4",
+        "description": "uvicorn's access log prints client IPs, which would violate NFR-1.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Run with `uvicorn app.main:app --no-access-log`. The app's own request log contains method, path (no query string), status and duration_ms only."
+      },
+      {
+        "id": "RK-5",
+        "description": "Python-side day bucketing loads every created_at in the window for very popular links.",
+        "likelihood": "low",
+        "impact": "medium",
+        "mitigation": "Only one column is selected and the window is capped at 365 days. The (link_id, created_at) index serves the query. A future iteration can add pre-aggregated daily counters."
+      },
+      {
+        "id": "RK-6",
+        "description": "The idempotency race path is hard to exercise.",
+        "likelihood": "low",
+        "impact": "medium",
+        "mitigation": "The service re-reads the key after an IntegrityError and returns 409 if it is still missing. Tests simulate the race by pre-inserting the key row after the first lookup (monkeypatch IdempotencyRepository.get_by_key to return None once)."
+      },
+      {
+        "id": "RK-7",
+        "description": "Datetime serialization differences between the first response and a replay would break FR-4's identical-body check.",
+        "likelihood": "low",
+        "impact": "medium",
+        "mitigation": "Both responses are built from DB-loaded attributes (expire_on_commit=True reloads after commit). Schemas normalize datetimes to tz-aware UTC."
+      }
+    ],
+    "work_packages": [
+      {
+        "id": "WP-1",
+        "title": "Foundation: requirements and app/core",
+        "description": "Create requirements.txt with exactly these pinned lines: fastapi==0.115.6, uvicorn==0.32.1, sqlalchemy==2.0.36, pydantic==2.10.4, pydantic-settings==2.7.0, httpx==0.28.1, pytest==8.3.4, pytest-cov==6.0.0. Create an empty app/__init__.py and app/core/__init__.py.\n\napp/core/config.py: `class Settings(BaseSettings)` with model_config = SettingsConfigDict(env_file=None, extra='ignore', case_sensitive=False). Fields: database_url: str = 'sqlite:///./shortener.db'; base_url: str = 'http://localhost:8000'; short_code_length: int = Field(7, ge=4, le=32); code_max_attempts: int = Field(5, ge=1, le=20); ip_hash_salt: str | None = None (a field_validator turns an empty or whitespace-only value into None); log_level: str = 'INFO' (uppercased by a validator). The env var names are the field names in upper case. Define no module-level settings instance and no lru_cache.\n\napp/core/db.py:\n- `create_db_engine(database_url: str) -> Engine`: connect_args={'check_same_thread': False} when the URL starts with 'sqlite', pool_pre_ping=True otherwise, future defaults.\n- `create_session_factory(engine) -> sessionmaker[Session]`: autoflush=False, expire_on_commit=True.\n- `def get_db(request: Request) -> Iterator[Session]`: session = request.app.state.session_factory(); yield it; close it in finally. This exact function object is the override point for tests and must be used by every router.\n\napp/core/errors.py:\n- `class AppError(Exception)` with class attrs status_code: int = 500, default_detail: str, and __init__(self, detail: str | None = None) storing self.detail.\n- Subclasses: BadRequestError(400, 'Bad request'), NotFoundError(404, 'Link not found'), ConflictError(409, 'Conflict'), GoneError(410, 'Link has been deactivated'), ServiceUnavailableError(503, 'Service temporarily unavailable').\n- `register_exception_handlers(app: FastAPI) -> None` registers:\n  - AppError -> JSONResponse({'detail': exc.detail}, exc.status_code)\n  - starlette.exceptions.HTTPException -> JSONResponse({'detail': exc.detail}, exc.status_code, headers=exc.headers)\n  - RequestValidationError -> 422 {'detail': jsonable_encoder(exc.errors())}\n  - sqlalchemy.exc.SQLAlchemyError -> logger 'app.errors'.exception('database error'), then 503 {'detail': 'Service temporarily unavailable'}\n  - Exception -> logger.exception('unhandled exception'), then 500 {'detail': 'Internal Server Error'}\n  Error bodies never include the exception message.\n\napp/core/logging.py: `class JsonFormatter(logging.Formatter)` emits one JSON line with keys ts (ISO UTC), level, logger and message, plus any of the extra attrs method, path, status and duration_ms when present, plus exc_info formatted as 'exc' when present. `configure_logging(level: str) -> None` sets logging.getLogger('app') to the given level and attaches a single StreamHandler with JsonFormatter only if one is not already attached (idempotent across create_app calls). Leave propagate=True so pytest caplog works.\n\napp/core/middleware.py: `class RequestLoggingMiddleware(BaseHTTPMiddleware)`. dispatch records start = time.perf_counter(), then: try response = await call_next(request); except Exception: logging.getLogger('app.errors').exception('unhandled exception') and response = JSONResponse({'detail': 'Internal Server Error'}, status_code=500). Afterwards it calls logging.getLogger('app.request').info('request', extra={'method': request.method, 'path': request.url.path, 'status': response.status_code, 'duration_ms': round(ms, 2)}). Never log request.client, X-Forwarded-For, the query string or headers.",
+        "files": [
+          "requirements.txt",
+          "app/__init__.py",
+          "app/core/__init__.py",
+          "app/core/config.py",
+          "app/core/db.py",
+          "app/core/errors.py",
+          "app/core/logging.py",
+          "app/core/middleware.py"
+        ],
+        "depends_on": [],
+        "fr_ids": [
+          "FR-11",
+          "FR-12",
+          "FR-10"
+        ],
+        "risk": "low"
+      },
+      {
+        "id": "WP-2",
+        "title": "ORM models and repositories",
+        "description": "Use only sqlalchemy and the standard library; import nothing from app.core, app.services or app.api.\n\napp/models/base.py: `class Base(DeclarativeBase): pass`; `def utcnow() -> datetime: return datetime.now(timezone.utc).replace(tzinfo=None)`.\n\napp/models/link.py: `class Link(Base)`, __tablename__='links'. Columns:\n- id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)\n- code: Mapped[str] = mapped_column(String(32), nullable=False)\n- url: Mapped[str] = mapped_column(String(2048), nullable=False)\n- is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)\n- created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)\n- deactivated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)\n__table_args__ = (UniqueConstraint('code', name='uq_links_code'),). Define no relationships.\n\napp/models/click_event.py: `class ClickEvent(Base)`, __tablename__='click_events'. Columns: id (pk, autoincrement), link_id (Integer, ForeignKey('links.id'), nullable=False), created_at (DateTime, nullable=False, default=utcnow), referrer (String(2048), nullable), user_agent (String(512), nullable), ip_hash (String(64), nullable). __table_args__ = (Index('ix_click_events_link_id_created_at', 'link_id', 'created_at'),). There must be NO ip/raw-IP column.\n\napp/models/idempotency_key.py: `class IdempotencyKey(Base)`, __tablename__='idempotency_keys'. Columns: id (pk), key (String(255), nullable=False), request_hash (String(64), nullable=False), link_id (Integer, ForeignKey('links.id'), nullable=False), created_at (DateTime, default=utcnow, nullable=False). UniqueConstraint('key', name='uq_idempotency_keys_key').\n\napp/models/__init__.py re-exports Base, utcnow, Link, ClickEvent and IdempotencyKey (importing it registers all tables on Base.metadata).\n\nRepositories each take `session: Session` in __init__, use select()/func with bound parameters only, may call flush(), and NEVER call commit/rollback.\n\napp/repositories/link_repository.py, `class LinkRepository`:\n- get_by_code(code: str) -> Link | None (select(Link).where(Link.code == code))\n- add(link: Link) -> Link: session.add then session.flush(); IntegrityError propagates.\n\napp/repositories/click_repository.py, `class ClickRepository`:\n- add(event: ClickEvent) -> ClickEvent: add, then flush.\n- count_for_link(link_id: int) -> int: select(func.count(ClickEvent.id)).where(...); scalar_one.\n- created_at_since(link_id: int, since: datetime) -> list[datetime]: select(ClickEvent.created_at).where(link_id == ..., created_at >= since).\n- referrer_counts(link_id: int) -> list[tuple[str | None, int]]: select(ClickEvent.referrer, func.count(ClickEvent.id)).where(...).group_by(ClickEvent.referrer).\n\napp/repositories/idempotency_repository.py, `class IdempotencyRepository`:\n- get_by_key(key: str) -> IdempotencyKey | None\n- add(record: IdempotencyKey) -> IdempotencyKey: add, then flush; IntegrityError propagates.\n\napp/repositories/__init__.py re-exports the three classes.",
+        "files": [
+          "app/models/__init__.py",
+          "app/models/base.py",
+          "app/models/link.py",
+          "app/models/click_event.py",
+          "app/models/idempotency_key.py",
+          "app/repositories/__init__.py",
+          "app/repositories/link_repository.py",
+          "app/repositories/click_repository.py",
+          "app/repositories/idempotency_repository.py"
+        ],
+        "depends_on": [],
+        "fr_ids": [
+          "FR-3",
+          "FR-4",
+          "FR-7",
+          "FR-8",
+          "FR-9",
+          "FR-12"
+        ],
+        "risk": "low"
+      },
+      {
+        "id": "WP-3",
+        "title": "Pydantic schemas and URL validation",
+        "description": "Pydantic v2 only; import nothing from other app packages. Use `import datetime as dt` so field names can be 'date'.\n\napp/schemas/links.py:\n- MAX_URL_LENGTH = 2048.\n- `def validate_target_url(value: str) -> str`: raise ValueError with a short message when any of these hold:\n  - len(value) == 0 or len(value) > 2048\n  - any char c with ord(c) <= 0x20, ord(c) == 0x7F, ord(c) > 0x7E, or c.isspace() (this rejects whitespace, control and non-ASCII characters)\n  - parsing fails: parts = urllib.parse.urlsplit(value) and parts.port are both evaluated inside try, and a ValueError there means 'invalid URL'\n  - parts.scheme.lower() not in {'http', 'https'}\n  - not value[len(parts.scheme):].startswith('://')\n  - not parts.netloc or not parts.hostname\n  Otherwise return value UNCHANGED (no normalization). Examples: 'HTTPS://example.com' is accepted. Rejected: 'javascript:alert(1)', 'data:text/html,hi', 'file:///etc/passwd', 'ftp://example.com', 'mailto:a@b.c', '/path', 'example.com', 'http://', 'https:///x', 'http://exa mple.com', and any URL containing \\n or \\t.\n- `class LinkCreate(BaseModel)`: url: StrictStr; a field_validator('url') calls validate_target_url. model_config = ConfigDict(json_schema_extra={'examples': [{'url': 'https://example.com/a?b=1'}]}).\n- `def _as_utc(v: dt.datetime | None) -> dt.datetime | None`: if naive, replace(tzinfo=dt.timezone.utc); otherwise astimezone(dt.timezone.utc).\n- `class LinkCreatedResponse(BaseModel)`: code: str; short_url: str; url: str; is_active: bool; created_at: dt.datetime, with a field_validator(mode='after') applying _as_utc.\n- `class LinkDetailResponse(LinkCreatedResponse)`: deactivated_at: dt.datetime | None = None (same UTC validator); total_clicks: int.\n- `class DailyClicks(BaseModel)`: date: dt.date; count: int.\n- `class ReferrerCount(BaseModel)`: referrer: str | None; count: int.\n- `class LinkStatsResponse(BaseModel)`: code: str; total_clicks: int; clicks_per_day: list[DailyClicks]; top_referrers: list[ReferrerCount].\n- `class ErrorResponse(BaseModel)`: detail: Any (used in OpenAPI `responses=`).\n\napp/schemas/health.py: `class HealthResponse(BaseModel)`: status: str.\n\napp/schemas/__init__.py re-exports all of the above.",
+        "files": [
+          "app/schemas/__init__.py",
+          "app/schemas/links.py",
+          "app/schemas/health.py"
+        ],
+        "depends_on": [],
+        "fr_ids": [
+          "FR-1",
+          "FR-2",
+          "FR-6",
+          "FR-9",
+          "FR-13"
+        ],
+        "risk": "medium"
+      },
+      {
+        "id": "WP-4",
+        "title": "Services: codes, link lifecycle, redirect/clicks, stats",
+        "description": "Never import fastapi or starlette. Import errors from app.core.errors, models from app.models, and repositories from app.repositories. Services commit and roll back themselves.\n\napp/services/codes.py:\n- ALPHABET = string.ascii_letters + string.digits\n- RESERVED_CODES = frozenset({'healthz', 'readyz', 'api', 'docs', 'redoc', 'openapi.json', 'static', 'favicon.ico'})\n- CODE_PATTERN = re.compile(r'^[A-Za-z0-9]{1,32}$')\n- `def generate_code(length: int) -> str`: ''.join(secrets.choice(ALPHABET) for _ in range(length)). Never use the random module.\n- `def is_reserved(code: str) -> bool`: code.casefold() in RESERVED_CODES.\n- `def is_valid_code_format(code: str) -> bool`: bool(CODE_PATTERN.fullmatch(code)).\n\napp/services/link_service.py (module logger = logging.getLogger('app.services.links')):\n- `@dataclass class CreateResult: link: Link; replayed: bool`\n- `@dataclass class LinkDetail: link: Link; total_clicks: int`\n- MAX_REFERRER_LEN = 2048, MAX_USER_AGENT_LEN = 512, MAX_IDEMPOTENCY_KEY_LEN = 255.\n- `def hash_ip(ip: str | None, salt: str | None) -> str | None`: if not ip or not salt, return None; otherwise hmac.new(salt.encode(), ip.encode(), hashlib.sha256).hexdigest().\n- `class LinkService.__init__(self, session: Session, *, code_length: int = 7, max_attempts: int = 5, ip_hash_salt: str | None = None)` builds LinkRepository, ClickRepository and IdempotencyRepository.\n\n`create_link(self, url: str, idempotency_key: str | None = None) -> CreateResult`:\n(a) If the key is not None and (key.strip() == '' or len(key) > 255), raise BadRequestError('Invalid Idempotency-Key header').\n(b) request_hash = hashlib.sha256(url.encode('utf-8')).hexdigest().\n(c) If a key is given: existing = idem_repo.get_by_key(key). If it exists, return self._replay_or_conflict(existing, request_hash).\n(d) Loop for attempt in range(max_attempts):\n  - code = codes.generate_code(self.code_length). Call it through the module (`from app.services import codes`) so tests can monkeypatch app.services.codes.generate_code.\n  - If codes.is_reserved(code): continue.\n  - link = Link(code=code, url=url, is_active=True); try link_repo.add(link); on IntegrityError call session.rollback() and continue.\n  - If a key is given: try idem_repo.add(IdempotencyKey(key=key, request_hash=request_hash, link_id=link.id)). On IntegrityError: session.rollback(); winner = idem_repo.get_by_key(key); if winner is None raise ConflictError('Idempotency-Key conflict, please retry'); otherwise return self._replay_or_conflict(winner, request_hash).\n  - session.commit(); return CreateResult(link=link, replayed=False). Attributes reload from the DB after commit.\n(e) After the loop: logger.error('short code allocation exhausted') and raise ServiceUnavailableError('Could not allocate a unique short code, please retry').\n\n`_replay_or_conflict(record, request_hash) -> CreateResult`: if record.request_hash != request_hash, raise ConflictError('Idempotency-Key already used with a different payload'). Otherwise load the link with session.get(Link, record.link_id) and return CreateResult(link, replayed=True).\n\n`_get_or_404(code) -> Link`: if not codes.is_valid_code_format(code), raise NotFoundError() without querying. Otherwise link = link_repo.get_by_code(code); raise NotFoundError() if it is None.\n\n`get_link_detail(code) -> LinkDetail`: returns the link (active or not) plus click_repo.count_for_link(link.id).\n\n`deactivate(code) -> None`: link = _get_or_404(code). If link.is_active: set is_active=False and deactivated_at=utcnow(), then commit. An already-inactive link is a no-op (deactivated_at unchanged).\n\n`resolve_for_redirect(code) -> str`: link = _get_or_404(code); if not link.is_active raise GoneError(); return link.url. This is used by HEAD and records no click.\n\n`resolve_and_record_click(code, referrer: str | None, user_agent: str | None, client_ip: str | None) -> str`: link = _get_or_404(code); if inactive raise GoneError(); url = link.url (read before any commit). Then try: click_repo.add(ClickEvent(link_id=link.id, referrer=referrer[:2048] if referrer else None, user_agent=user_agent[:512] if user_agent else None, ip_hash=hash_ip(client_ip, self.ip_hash_salt))); session.commit(). On `except Exception`: session.rollback() and logger.exception('failed to record click for link_id=%s', link.id), never logging the IP. Return url.\n\napp/services/stats_service.py:\n- `@dataclass class LinkStats: code: str; total_clicks: int; clicks_per_day: list[tuple[date, int]]; top_referrers: list[tuple[str | None, int]]`\n- TOP_REFERRERS_LIMIT = 10.\n- `class StatsService.__init__(self, session)` builds LinkRepository and ClickRepository.\n- `get_stats(self, code: str, days: int = 30, now: datetime | None = None) -> LinkStats`:\n  - If the code format is invalid or the link is missing, raise NotFoundError(). Deactivated links are allowed.\n  - now defaults to utcnow() (naive UTC; strip tzinfo after converting to UTC if one is passed).\n  - start_date = now.date() - timedelta(days=days - 1); since = datetime.combine(start_date, time.min).\n  - total = click_repo.count_for_link(link.id).\n  - per_day = Counter(ts.date() for ts in click_repo.created_at_since(link.id, since)), sorted ascending by date and returned as a list of (date, count).\n  - refs = click_repo.referrer_counts(link.id), sorted with key=lambda r: (-r[1], r[0] is None, r[0] or ''), sliced [:10].\n  - Return LinkStats.\n\napp/services/__init__.py stays empty.",
+        "files": [
+          "app/services/__init__.py",
+          "app/services/codes.py",
+          "app/services/link_service.py",
+          "app/services/stats_service.py"
+        ],
+        "depends_on": [
+          "WP-1",
+          "WP-2"
+        ],
+        "fr_ids": [
+          "FR-1",
+          "FR-3",
+          "FR-4",
+          "FR-5",
+          "FR-6",
+          "FR-7",
+          "FR-8",
+          "FR-9"
+        ],
+        "risk": "high"
+      },
+      {
+        "id": "WP-5",
+        "title": "API routers, dependency providers and app factory",
+        "description": "Create an empty app/api/__init__.py.\n\napp/api/deps.py:\n- `get_settings(request: Request) -> Settings`: return request.app.state.settings.\n- `get_link_service(db: Session = Depends(get_db), settings: Settings = Depends(get_settings)) -> LinkService`: LinkService(db, code_length=settings.short_code_length, max_attempts=settings.code_max_attempts, ip_hash_salt=settings.ip_hash_salt).\n- `get_stats_service(db: Session = Depends(get_db)) -> StatsService`.\n- `build_short_url(base_url: str, code: str) -> str`: base_url.rstrip('/') + '/' + code.\nget_db must be imported from app.core.db.\n\napp/api/links.py: router = APIRouter(prefix='/api/links', tags=['links']). Common error responses use ErrorResponse models.\n- `@router.post('', status_code=201, response_model=LinkCreatedResponse, responses={400,409,422,503})` `def create_link(payload: LinkCreate, response: Response, idempotency_key: str | None = Header(default=None, alias='Idempotency-Key'), service=Depends(get_link_service), settings=Depends(get_settings))`: result = service.create_link(payload.url, idempotency_key). Set response.headers['Location'] = f'/api/links/{code}'. If result.replayed, set response.headers['Idempotent-Replayed'] = 'true'. Return LinkCreatedResponse(code, short_url=build_short_url(...), url, is_active, created_at).\n- `@router.get('/{code}', response_model=LinkDetailResponse, responses={404})`: build from service.get_link_detail(code), adding deactivated_at and total_clicks.\n- `@router.delete('/{code}', status_code=204, response_class=Response, responses={404})`: service.deactivate(code); return Response(status_code=204).\n- `@router.get('/{code}/stats', response_model=LinkStatsResponse, responses={404,422})` `def get_stats(code: str, days: int = Query(30, ge=1, le=365), service=Depends(get_stats_service))`: map LinkStats to the response (DailyClicks(date=d, count=c), ReferrerCount(referrer=r, count=c)).\n\napp/api/redirect.py: router = APIRouter(tags=['redirect']).\n- `@router.get('/{code}', status_code=307, response_class=Response, responses={307: {'description': 'Redirect to original URL'}, 404: ..., 410: ...})` `def redirect(code: str, request: Request, service=Depends(get_link_service))`: url = service.resolve_and_record_click(code, request.headers.get('referer'), request.headers.get('user-agent'), request.client.host if request.client else None). Return Response(status_code=307, headers={'Location': url, 'Cache-Control': 'no-store'}). Do NOT use RedirectResponse, which quotes the URL.\n- `@router.head('/{code}', include_in_schema=False)`: same response, built with service.resolve_for_redirect(code); records no click.\n\napp/api/health.py: router = APIRouter(tags=['health']).\n- `@router.get('/healthz', response_model=HealthResponse)` returns {'status': 'ok'} with no DB dependency.\n- `@router.get('/readyz', response_model=HealthResponse, responses={503})` `def readyz(db: Session = Depends(get_db))`: try db.execute(text('SELECT 1')); except Exception: logging.getLogger('app.health').warning('readiness check failed') and raise ServiceUnavailableError('Database is not ready'). Return {'status': 'ready'}.\n\napp/main.py: `def create_app(settings: Settings | None = None) -> FastAPI`:\n- settings = settings or Settings(); configure_logging(settings.log_level).\n- engine = create_db_engine(settings.database_url); session_factory = create_session_factory(engine).\n- @asynccontextmanager lifespan(app): Base.metadata.create_all(bind=engine); yield; engine.dispose().\n- app = FastAPI(title='URL Shortener', version='1.0.0', lifespan=lifespan); set app.state.settings, app.state.engine and app.state.session_factory.\n- register_exception_handlers(app); app.add_middleware(RequestLoggingMiddleware).\n- Include routers in EXACTLY this order: health.router, links.router, redirect.router (the catch-all goes last).\n- Return app. At module level: `app = create_app()`.\n- Import Base from app.models so that all tables register.\n- Docstring note: run with `uvicorn app.main:app --no-access-log`.",
+        "files": [
+          "app/api/__init__.py",
+          "app/api/deps.py",
+          "app/api/links.py",
+          "app/api/redirect.py",
+          "app/api/health.py",
+          "app/main.py"
+        ],
+        "depends_on": [
+          "WP-1",
+          "WP-2",
+          "WP-3",
+          "WP-4"
+        ],
+        "fr_ids": [
+          "FR-1",
+          "FR-4",
+          "FR-5",
+          "FR-6",
+          "FR-7",
+          "FR-8",
+          "FR-9",
+          "FR-10",
+          "FR-11",
+          "FR-12",
+          "FR-13"
+        ],
+        "risk": "medium"
+      }
+    ],
+    "dependencies": [
+      "fastapi==0.115.6",
+      "uvicorn==0.32.1",
+      "sqlalchemy==2.0.36",
+      "pydantic==2.10.4",
+      "pydantic-settings==2.7.0",
+      "httpx==0.28.1",
+      "pytest==8.3.4",
+      "pytest-cov==6.0.0"
+    ],
+    "test_strategy": "pytest with fastapi.testclient.TestClient, owned by the test agent.\n\nIsolation: a fixture builds `settings = Settings(database_url=f\"sqlite:///{tmp_path}/test.db\", base_url=\"http://sho.rt\")`, then `app = create_app(settings)`, and yields `with TestClient(app) as client:`. The context manager is mandatory so that the lifespan create_all runs. Every test docstring starts with 'Covers: FR-n[, NFR-m]'.\n\nKey techniques:\n(1) Redirects: client.get(f'/{code}', follow_redirects=False); assert 307, the exact Location, and Cache-Control no-store.\n(2) Forced collision: monkeypatch.setattr('app.services.codes.generate_code', fake). The fake returns an existing code first and then a fresh one, always the same code (expect 503 with no traceback), or 'healthz' first (reserved, then fresh).\n(3) Uniqueness: insert a duplicate Link through a session from app.state.session_factory and expect sqlalchemy.exc.IntegrityError. Create 1000 links via the API and check that all codes are unique and match ^[A-Za-z0-9]{7}$.\n(4) Idempotency: same key and same body give identical bodies with exactly one Idempotent-Replayed header and one row; a different url gives 409; an empty or 256-char key gives 400; the race is simulated per RK-6.\n(5) Click privacy: send requests with X-Forwarded-For: 203.0.113.7, scan every column of every click_events row plus caplog text for '203.0.113.7' and 'testclient', and check ip_hash is null without a salt or equals hmac.new(salt, b'testclient', sha256).hexdigest() with Settings(ip_hash_salt='s').\n(6) Stats day bucketing: insert ClickEvent rows directly with created_at set to 23:59:59 yesterday and 00:00:01 today (UTC, naive), relative to datetime.now(timezone.utc). Also check the days=0/366 422 cases, top-referrer ordering and the limit of 10.\n(7) Readiness failure: app.dependency_overrides[app.core.db.get_db] = a generator yielding a stub whose execute() raises sqlalchemy.exc.OperationalError('SELECT 1', {}, Exception('boom')); expect 503 and a body without 'boom'.\n(8) 500 handling: either app.add_api_route('/_test/boom', raising_endpoint) (a multi-segment path, so the catch-all cannot match it) or monkeypatch LinkService.get_link_detail to raise RuntimeError('secret'). Assert the body is exactly {'detail': 'Internal Server Error'} and that caplog has the traceback. Use TestClient(app, raise_server_exceptions=False) as a safety net.\n(9) Click failure: monkeypatch ClickRepository.add to raise SQLAlchemyError; expect 307 still returned and a warning/error logged.\n(10) Request log: caplog record from logger 'app.request' has attributes method, path, status and duration_ms.\n(11) OpenAPI: check the paths and the named schemas LinkCreatedResponse, LinkDetailResponse and LinkStatsResponse.\n(12) Optional performance test (NFR-4), marked slow: 10k links seeded, 500 redirects and 200 creations, p95 checked.\n\nTarget: at least 85% line coverage of app/ (pytest --cov=app).",
+    "config": [
+      "DATABASE_URL=sqlite:///./shortener.db (SQLAlchemy URL; for SQLite, check_same_thread=False is applied automatically)",
+      "BASE_URL=http://localhost:8000 (trailing slash stripped when building short_url)",
+      "SHORT_CODE_LENGTH=7 (int, 4..32)",
+      "CODE_MAX_ATTEMPTS=5 (int, 1..20; collision retries before 503)",
+      "IP_HASH_SALT= (optional; empty or unset means ip_hash is stored as NULL)",
+      "LOG_LEVEL=INFO (DEBUG|INFO|WARNING|ERROR)"
+    ]
+  }
+}

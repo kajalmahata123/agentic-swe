@@ -1,0 +1,29 @@
+{
+  "name": "impl_report:WP-5",
+  "version": 1,
+  "hash": "cef401dfc1ad19ba",
+  "producer": "impl:WP-5",
+  "derived_from": {
+    "requirements_spec": "177a1306cb37a92f",
+    "design": "4546f8f39faeb8aa"
+  },
+  "value": {
+    "summary": "Added HEAD support for /healthz and /readyz in app/api/health.py. HEAD /healthz returns 200 with an empty body and has no database dependency. HEAD /readyz runs SELECT 1 through a new shared _check_database(db) helper and returns 200 with an empty body, or 503 'Database is not ready' with no exception text. Both HEAD routes use include_in_schema=False. The GET routes keep their decorators, response models, summaries and JSON bodies; GET /readyz now uses the same helper. No api_route and no POST, so POST still returns 405. The module docstring mentions HEAD support for uptime monitors. compileall passes. The full suite could not be run because it exceeded the 300-second command limit; all test files except tests/test_create_and_validation.py were run and pass.",
+    "files_changed": [
+      "app/api/health.py"
+    ],
+    "notes": [
+      "_check_database logs one WARNING ('readiness check failed') and raises ServiceUnavailableError('Database is not ready') from None, so no exception details leak.",
+      "The HEAD routes return fastapi.Response(status_code=200), so the body is guaranteed empty and the OpenAPI path/operation set is unchanged.",
+      "These routes only take precedence over the catch-all HEAD /{code} if the health router stays included before the redirect router in app/main.py (WP-6, which keeps the current order).",
+      "Passed: python -m compileall -q app.",
+      "Passed, non-slow tests only: tests/test_health_and_errors.py, tests/test_config_openapi_architecture.py, tests/test_redirect_and_clicks.py.",
+      "Passed: tests/test_auth.py, tests/test_codes.py and tests/test_lookup_and_deactivate.py (non-slow tests), plus tests/test_stats.py and tests/test_idempotency.py (full files).",
+      "The new HEAD routes have no tests yet; tests/test_probes_head.py (FR-14) is owned by the test agent."
+    ],
+    "open_issues": [
+      "The full suite was not run to completion: tests/test_create_and_validation.py repeatedly exceeded the 300-second command limit. It does not exercise the health routes, so this change should not affect it, but it needs to be run with a longer limit and its slowness should be investigated.",
+      "FR-14 tests (tests/test_probes_head.py) are owned by the test agent and do not exist yet, so the new HEAD routes are untested."
+    ]
+  }
+}

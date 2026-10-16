@@ -1,0 +1,36 @@
+{
+  "name": "impl_report:WP-2",
+  "version": 1,
+  "hash": "236e0d25e2602895",
+  "producer": "impl:WP-2",
+  "derived_from": {
+    "requirements_spec": "f9e39c09ed667d11",
+    "design": "69d249761c25951f"
+  },
+  "value": {
+    "summary": "I built WP-2: the three SQLAlchemy 2.0 models (`Link`, `ClickEvent`, `IdempotencyKey`), the shared `Base` class with the `utcnow()` helper, and the three repositories. Everything follows the design's names, columns, constraint/index names and method signatures. `python -m compileall -q app` passes, and ruff passes with the project's rules when run in isolated mode. I haven't run any of this code against a database: there are no tests in the workspace and I can't write any in my scope.",
+    "files_changed": [
+      "app/models/__init__.py",
+      "app/models/base.py",
+      "app/models/link.py",
+      "app/models/click_event.py",
+      "app/models/idempotency_key.py",
+      "app/repositories/__init__.py",
+      "app/repositories/link_repository.py",
+      "app/repositories/click_repository.py",
+      "app/repositories/idempotency_repository.py"
+    ],
+    "notes": [
+      "Models import only sqlalchemy and the standard library; repositories import only sqlalchemy and `app.models`. Nothing comes from `app.core`, `app.services` or `app.api`.",
+      "`utcnow()` uses `datetime.now(UTC).replace(tzinfo=None)` rather than the design's `timezone.utc`. It behaves identically on Python 3.11 and satisfies ruff rule UP017.",
+      "Unique constraints are named `uq_links_code` and `uq_idempotency_keys_key`. The index is `ix_click_events_link_id_created_at` on (link_id, created_at). `click_events` has no raw-IP column, only `ip_hash` (String(64), nullable). All column types are portable and no relationships are defined.",
+      "Repositories only add, flush and query, never commit or roll back, and build every query with `select()`/`func`, so values are always bound parameters. An `IntegrityError` from `add()` reaches the caller unchanged.",
+      "`ClickRepository.count_for_link` and `referrer_counts` return Python ints. `referrer_counts` comes back unordered (sorting is the stats service's job), with null referrers grouped into a single row.",
+      "Plain `python -m ruff check app` from this worktree reports I001 (import order). The ruff config in the parent pipeline project's pyproject.toml points `src` at that project's root, so ruff treats `app` as a third-party package. With `--isolated --select I,UP,E,F,B,S --line-length 110` all checks pass, and the import order is the usual stdlib / third-party / first-party one."
+    ],
+    "open_issues": [
+      "`app/__init__.py` belongs to WP-1 and isn't in the workspace yet. Compiling works without it, but WP-1 must add it before anything can import the package.",
+      "If the pipeline's ruff check runs from inside worktrees, its `src` setting probably needs to include the worktree root. Otherwise every package will fail I001 even when its imports are ordered correctly."
+    ]
+  }
+}

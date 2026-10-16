@@ -1,0 +1,19 @@
+{
+  "name": "docs_report",
+  "version": 1,
+  "hash": "42df81f8b73b2bfe",
+  "producer": "docs",
+  "derived_from": {
+    "requirements_spec": "f9e39c09ed667d11",
+    "design": "69d249761c25951f"
+  },
+  "value": {
+    "summary": "I wrote the README, the API reference, the operations runbook and a changelog entry for release 1.0.0, all based on reading the code in `app/`. There are no tests in the workspace yet, so none of the documented behaviour has been checked against a running service. The only check I ran was `python -m compileall app`, which passed.\n\n- **README.md:** what the service does, a warning that there is no authentication, the feature list, and quick start (install, run with `uvicorn app.main:app --no-access-log`, run tests with `python -m pytest -q`). It also has a configuration table for all six environment variables with their defaults and allowed ranges, an API overview table, curl examples for create, idempotent create, redirect, lookup, stats, delete and the probes, and the project layout.\n- **docs/API.md:** every endpoint: `POST /api/links`, `GET` and `DELETE /api/links/{code}`, `GET /api/links/{code}/stats`, `GET` and `HEAD /{code}`, `/healthz` and `/readyz`. For each it gives the request and response bodies, headers, status codes, the exact `detail` strings from the code, and examples. It also covers the URL validation rules with accepted and rejected examples and the idempotency rules.\n- **docs/OPERATIONS.md:** how to run the service and what happens at startup, probe settings (with a Kubernetes example), the JSON log fields and every log event, and what is never logged. It covers what to do for each failure mode, the tables and indexes, privacy notes on IP hashing and salt rotation, and scaling. One section says plainly that there is no metrics endpoint and lists signals you can get from the request logs instead.\n- **CHANGELOG.md:** a Keep a Changelog `[1.0.0]` entry with Added and Security sections.\n\nWhere the code differs from the design or requirements, I documented the code:\n- `LOG_LEVEL` also accepts `CRITICAL`, and an invalid setting stops the app at startup.\n- An empty `Referer` or `User-Agent` header is stored as null.\n- A code that doesn't match `^[A-Za-z0-9]{1,32}$` gets 404 without a database lookup.\n- 404 for an unknown route says \"Not Found\"; 404 for an unknown link says \"Link not found\".\n- 405 responses include an `Allow` header.\n\nProblems for operators that the docs now spell out:\n- `requirements.txt` has no PostgreSQL or MySQL driver, so only SQLite works without installing one.\n- If several instances start against an empty database at once, one can fail creating tables and need a restart.\n- Uvicorn's proxy settings decide which address gets hashed into `ip_hash`.\n- Nothing is ever deleted: there is no purge job and idempotency keys never expire.\n- CORS is not configured.\n\nFor the test agent: no `tests/` directory exists yet. The README assumes tests will be added and run with `python -m pytest -q`.",
+    "files": [
+      "README.md",
+      "docs/API.md",
+      "docs/OPERATIONS.md",
+      "CHANGELOG.md"
+    ]
+  }
+}

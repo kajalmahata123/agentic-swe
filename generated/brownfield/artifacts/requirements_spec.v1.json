@@ -1,0 +1,457 @@
+{
+  "name": "requirements_spec",
+  "version": 1,
+  "hash": "a29fdf7abe9a8b61",
+  "producer": "requirements",
+  "derived_from": {
+    "requirement": "d06fb782651601bf",
+    "codebase_impact": "5deab31e4b3ad5a1"
+  },
+  "value": {
+    "title": "CR-142 (custom aliases and link expiration) and BUG-77 (URL scheme validation investigation) for the URL shortener",
+    "problem_statement": "The existing FastAPI/SQLAlchemy URL shortener only issues random 7-character base62 codes, and its links never expire. CR-142 adds two things. First, clients can choose their own short code (alias): 3-32 characters from [A-Za-z0-9_-]. Reserved words give 422 and a taken alias gives 409. Second, links can have an optional future expiry `expires_at`. Redirecting an expired link gives 410 Gone, and link metadata reports whether the link is expired. Both features must be backwards compatible. Existing endpoints, response fields and the 165 existing tests must keep working. The new `links.expires_at` column needs an explicit migration, because startup only runs `create_all`, which never alters existing tables. BUG-77 says upper-case schemes (`HTTP://Example.com`) were rejected and that a `javascript:` URL was once accepted. Investigation shows the current validator accepts upper-case schemes and rejects every `javascript:` variant, so the URL validator has no defect. Regression tests must still lock in the reported inputs. Other defects found during the investigation must be fixed: `metrics` is missing from the reserved list, the lookup format check is base62-only, the idempotency hash covers only the URL, every IntegrityError is treated as a code collision, and the docs wrongly say there is no authentication.",
+    "functional": [
+      {
+        "id": "FR-1",
+        "title": "Create a link with a custom alias",
+        "description": "POST /api/links accepts an optional body field `alias` (string or null). When it is present and valid, the link is stored with code == alias exactly as given (case preserved), and the generated-code retry loop is skipped. When it is absent or null, today's generated-code behaviour is unchanged.",
+        "acceptance_criteria": [
+          "POST {\"url\":\"https://example.com\",\"alias\":\"my-link_1\"} with a valid X-API-Key returns 201. Body `code` == \"my-link_1\", `short_url` ends with \"/my-link_1\", and the Location header points to the new resource.",
+          "Boundary lengths are accepted: a 3-character alias (\"abc\") and a 32-character alias each return 201.",
+          "Alias format errors return 422 JSON {\"detail\": [...]} and no row is persisted: 2 characters (\"ab\"), 33 characters, empty string \"\", characters outside [A-Za-z0-9_-] (\"a.b\", \"a b\", \"a/b\", \"\u00e4-link\", \"abc%20\"), and non-string values (123, true, []).",
+          "When alias is omitted or null, the response code is a 7-character base62 generated code, exactly as before.",
+          "Aliases are case-sensitive on the default SQLite backend: after \"MyLink\" is created, creating \"mylink\" returns 201 and both redirect independently.",
+          "Without a valid X-API-Key, an alias create request returns 401 (the existing auth applies)."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-2",
+        "title": "Reject reserved words as aliases",
+        "description": "An alias that matches a reserved word, case-insensitively, is rejected with 422. The reserved set must contain at least api, docs, redoc, healthz, readyz, metrics and openapi.json, and it keeps the existing entries static and favicon.ico. A single source of truth (codes.RESERVED_CODES) is used for both generated codes and aliases.",
+        "acceptance_criteria": [
+          "POST with alias set to each of \"api\", \"docs\", \"redoc\", \"healthz\", \"readyz\", \"metrics\" returns 422 with a JSON `detail`, and no row is persisted.",
+          "Case variants such as \"API\", \"Docs\", \"METRICS\" and \"HealthZ\" also return 422.",
+          "\"openapi.json\" returns 422. It already fails the character rule because of '.', and it is in the reserved list as well.",
+          "Existing reserved entries \"static\" and \"favicon.ico\" stay reserved, and \"static\" as an alias returns 422.",
+          "Names that contain a reserved word but are not equal to it, such as \"api-docs\" and \"my-metrics\", are accepted with 201.",
+          "After the change, /healthz, /readyz, /docs, /redoc and /openapi.json still serve their original routes (they are not shadowed by the /{code} catch-all)."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-3",
+        "title": "Alias uniqueness gives 409",
+        "description": "An alias equal to any existing link code returns 409 Conflict. This includes generated codes, deactivated links and expired links. Uniqueness is enforced by the existing UNIQUE constraint uq_links_code. A concurrent-insert race on the alias path must map to 409, never to a retry with a random code or to 503.",
+        "acceptance_criteria": [
+          "After alias \"promo\" is created, a second POST with alias \"promo\" (same or different url) returns 409 with JSON {\"detail\": \"Alias already in use\"} (exact wording may differ but must say the alias is taken). No second row is created.",
+          "An alias equal to an existing generated code returns 409.",
+          "An alias equal to the code of a deactivated link returns 409.",
+          "An alias equal to the code of an expired link returns 409.",
+          "If the repository insert raises IntegrityError on the alias path (simulated race via monkeypatch), the response is 409, the session is rolled back, nothing is persisted, and codes.generate_code is not called.",
+          "On the generated-code path, collision retry, reserved-candidate discard and 503 on exhaustion behave as before. Existing tests in tests/test_codes.py pass unchanged."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-4",
+        "title": "Alias links resolve on every code-addressed endpoint",
+        "description": "Lookup of `{code}` on GET /{code}, HEAD /{code}, GET /api/links/{code}, DELETE /api/links/{code} and GET /api/links/{code}/stats accepts the widened format ^[A-Za-z0-9_-]{1,32}$, so aliases containing '-' or '_' work. codes.is_valid_code_format stays base62-only for generated codes. A new lookup validator is added instead.",
+        "acceptance_criteria": [
+          "For alias \"my-link_1\": GET /my-link_1 returns 307 with the exact Location and Cache-Control: no-store, and a click is recorded. HEAD /my-link_1 returns 307 and records no click. GET /api/links/my-link_1 returns 200. GET /api/links/my-link_1/stats returns 200. DELETE /api/links/my-link_1 returns the existing success status, after which GET /my-link_1 returns 410.",
+          "Codes that fail the widened format still return 404 JSON without a DB lookup on every code-addressed endpoint: \"a.b\", a 33+ character code, percent-encoded characters.",
+          "Codes that match the widened format but do not exist return 404 JSON.",
+          "tests/test_codes.py stays green, including `assert not codes.is_valid_code_format(\"abc-123\")`. Existing malformed-code tests that expect 404 still pass, adjusted only if they assert that '-'/'_' codes are malformed. Because such codes would now be valid-but-unknown, the status is still 404."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-5",
+        "title": "Accept and validate an optional expires_at at creation",
+        "description": "POST /api/links accepts an optional `expires_at` (ISO-8601 date-time string or null). Offset-aware values are converted to UTC. Naive values are treated as UTC, consistent with the existing _as_utc helper. The value must be strictly later than the server's current UTC time at request time. It is persisted as naive UTC in links.expires_at. Non-ISO inputs such as numbers are rejected.",
+        "acceptance_criteria": [
+          "POST with expires_at one hour in the future (\"2030-01-01T12:00:00Z\" or a relative future value in tests) returns 201. The response `expires_at` equals the submitted instant in UTC with a 'Z' suffix, and `is_expired` is false.",
+          "\"2030-01-01T14:00:00+02:00\" is stored and returned as \"2030-01-01T12:00:00Z\".",
+          "A naive \"2030-01-01T12:00:00\" is treated as UTC and returned as \"2030-01-01T12:00:00Z\".",
+          "An expires_at in the past, or equal to the current time (controlled clock), returns 422 JSON with a `detail` saying it must be in the future. No row is persisted.",
+          "Non-ISO or invalid values return 422: integer 1893456000, \"tomorrow\", \"2030-13-01T00:00:00Z\", \"\", true.",
+          "When expires_at is omitted or null, the link never expires: stored NULL, response `expires_at` null, `is_expired` false.",
+          "expires_at can be combined with alias in the same request, and both are applied."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-6",
+        "title": "Expired links return 410 Gone on redirect",
+        "description": "A link is expired when expires_at is not null and expires_at <= current UTC time, where the clock is injectable for tests. GET /{code} and HEAD /{code} on an expired link return 410 with a JSON detail distinct from the deactivation message. No Location header is sent and no click is recorded. Management endpoints (metadata, stats, delete) keep working for expired links.",
+        "acceptance_criteria": [
+          "After expiry (controlled clock or direct DB update of expires_at into the past), GET /{code} returns 410 with JSON {\"detail\": \"Link has expired\"}, has no Location header, and the click count stays unchanged.",
+          "HEAD /{code} on an expired link returns 410 and records no click.",
+          "At the exact instant expires_at == now the link counts as expired (410).",
+          "A link whose expires_at is still in the future redirects with 307 and records a click.",
+          "A link that is both deactivated and expired returns 410 with the existing deactivation detail \"Link has been deactivated\". Deactivation takes precedence.",
+          "GET /api/links/{code}/stats on an expired link returns 200 with historical clicks. GET /api/links/{code} returns 200. DELETE works on an expired link.",
+          "The 410 response for deactivated, non-expired links is unchanged (same status and detail as before)."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-7",
+        "title": "Link metadata reports expiry state",
+        "description": "LinkCreatedResponse and LinkDetailResponse gain the additive fields `expires_at` (UTC datetime with 'Z', or null) and `is_expired` (bool, computed against the current UTC time from the already-loaded row). All existing fields keep their names, types and formats.",
+        "acceptance_criteria": [
+          "GET /api/links/{code} returns `expires_at` and `is_expired` alongside all pre-existing fields (code, url, short_url, created_at, is_active, deactivated_at, total_clicks, ...), and the existing values are unchanged.",
+          "Before expiry `is_expired` is false. After expiry (controlled clock) it is true, while `is_active` stays true unless the link was deactivated.",
+          "The POST 201 response includes `expires_at` and `is_expired`.",
+          "Links with no expiry report `expires_at`: null and `is_expired`: false.",
+          "The OpenAPI schema names LinkCreate, LinkCreatedResponse and LinkDetailResponse are unchanged. The new fields appear in /openapi.json."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-8",
+        "title": "Explicit, idempotent schema migration for links.expires_at",
+        "description": "The ORM Link model gains `expires_at: Mapped[datetime | None]` (portable DateTime, nullable). On startup, after Base.metadata.create_all, an explicit idempotent migration step inspects the `links` table. If the column is missing, it runs the literal DDL `ALTER TABLE links ADD COLUMN expires_at DATETIME NULL`. Existing rows get NULL, meaning they never expire. The same SQL is documented for manual application by DBAs.",
+        "acceptance_criteria": [
+          "Start the app against a SQLite file created with the pre-CR-142 links schema (no expires_at) that holds an existing link. Startup succeeds, the column exists afterwards, the old link redirects with 307, its metadata shows expires_at null and is_expired false, and new links (with and without alias/expires_at) can be created.",
+          "Starting the app twice against the same database does not fail. The second run is a no-op.",
+          "On a fresh database, create_all produces the column and the migration step does nothing.",
+          "The migration uses only a literal SQL string (the existing static test that text() only receives literal strings stays green) and only portable sqltypes.",
+          "If two instances race and the ALTER fails with a 'duplicate column' error, startup tolerates it when the column now exists. Otherwise the error is logged and startup fails loudly. It is not swallowed."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-9",
+        "title": "Idempotency-Key covers alias and expires_at",
+        "description": "The idempotency request_hash covers the full creation payload. When alias and expires_at are both absent or null, the hash stays sha256(url), so keys stored before the change still replay. Otherwise it is sha256 of a canonical serialisation of url, alias and the UTC-normalised expires_at.",
+        "acceptance_criteria": [
+          "Same Idempotency-Key with an identical payload (url, alias, expires_at) replays: same status and body, Idempotent-Replayed header set, no new row.",
+          "Same key, same url, different alias returns 409. Same key, same url, different expires_at returns 409. Same key with alias added where the original had none returns 409.",
+          "Two expires_at values for the same instant in different offsets (\"...T12:00:00Z\" vs \"...T14:00:00+02:00\") count as the same payload and replay.",
+          "A pre-existing idempotency row whose request_hash == sha256(url) (inserted directly in the test) still replays for a url-only request with the same key.",
+          "With an Idempotency-Key, a reserved alias returns 422 and a taken alias returns 409, and no idempotency record is stored for the failed attempt.",
+          "The replay body includes `expires_at` and `is_expired` reflecting the link's current state."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-10",
+        "title": "Add 'metrics' to the reserved code list",
+        "description": "codes.RESERVED_CODES gains \"metrics\" so that neither generated codes nor aliases can take that name. is_reserved stays case-insensitive.",
+        "acceptance_criteria": [
+          "codes.is_reserved(\"metrics\") and codes.is_reserved(\"METRICS\") return True.",
+          "When codes.generate_code is monkeypatched to return \"metrics\" first and then a valid code, the created link gets the second code.",
+          "All entries previously in RESERVED_CODES remain."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-11",
+        "title": "BUG-77 regression tests for URL scheme validation",
+        "description": "Investigation found no defect in validate_target_url, so its behaviour must not change. Regression tests (docstrings citing BUG-77 plus the FR id) lock in that upper-case schemes are accepted and stored unchanged, and that every javascript: variant is rejected. The investigation result is recorded in CHANGELOG.",
+        "acceptance_criteria": [
+          "POST with url \"HTTP://Example.com\" returns 201 and the stored/returned url is exactly \"HTTP://Example.com\". The redirect Location equals it byte-for-byte.",
+          "POST with \"HTTPS://EXAMPLE.COM/Path\" returns 201 with the url unchanged.",
+          "Each of these returns 422 JSON and persists zero rows: \"javascript:alert(1)\", \"JavaScript:alert(1)\", \"JAVASCRIPT:alert(1)\", \"javascript://example.com/%0aalert(1)\", \" javascript:alert(1)\", \"\\tjavascript:alert(1)\", \"java\\nscript:alert(1)\", \"http:javascript:alert(1)\".",
+          "The same inputs with an alias and/or expires_at give the same results. The new fields do not bypass URL validation.",
+          "Existing test_create_and_validation.py cases and the app/schemas/links.py doctest pass unchanged."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-12",
+        "title": "Backwards compatibility and regression protection",
+        "description": "All existing endpoints, request contracts, response fields, status codes and headers keep working, and the full pre-existing test suite (165 tests) passes without weakening assertions.",
+        "acceptance_criteria": [
+          "`python -m pytest -q` passes with all pre-existing tests unchanged, except where an existing test asserted that a '-'/'_' code is malformed (the status must still be 404).",
+          "POST /api/links with only {\"url\": ...} returns a response that is a superset of the old one (same fields and formats, plus expires_at and is_expired).",
+          "Redirect keeps 307, the exact un-requoted Location and Cache-Control: no-store. 404 and 410 record no clicks. Click recording stays best-effort.",
+          "Architecture tests stay green: schemas import nothing from app.*, core does not import services, portable sqltypes, literal text(), pinned requirements, OpenAPI schema names.",
+          "The router order is unchanged: health, then /api/links, then the /{code} catch-all last."
+        ],
+        "priority": "must"
+      },
+      {
+        "id": "FR-13",
+        "title": "OpenAPI response documentation for new cases",
+        "description": "Route metadata documents the new status cases so API consumers can discover them.",
+        "acceptance_criteria": [
+          "/openapi.json for POST /api/links lists 409 (alias taken / idempotency conflict) and 422 (invalid or reserved alias, non-future expires_at) responses.",
+          "/openapi.json for GET /{code} and HEAD /{code} lists 410 covering deactivated or expired links."
+        ],
+        "priority": "should"
+      },
+      {
+        "id": "FR-14",
+        "title": "Documentation updates, including the stale authentication statements",
+        "description": "docs/API.md, docs/OPERATIONS.md, README.md and CHANGELOG.md describe the new behaviour, the schema change and migration, and correct the stale 'no authentication' statements.",
+        "acceptance_criteria": [
+          "API.md documents the alias and expires_at request fields, the expires_at and is_expired response fields, the reserved list, the 409/410/422 cases, the widened {code} format [A-Za-z0-9_-]{1,32}, the request_hash definition, and that X-API-Key is required for /api/links*.",
+          "OPERATIONS.md documents links.expires_at in the data model, the automatic startup migration plus the manual SQL `ALTER TABLE links ADD COLUMN expires_at DATETIME NULL`, the advice to migrate once before a multi-instance rollout, the MySQL case-insensitive collation caveat for aliases, and corrected security notes.",
+          "README feature list and security notice are updated. CHANGELOG [Unreleased] has entries for CR-142 (aliases, expiration, schema change, 'metrics' reserved) and for BUG-77 (not reproducible in the validator; regression tests added)."
+        ],
+        "priority": "should"
+      }
+    ],
+    "non_functional": [
+      {
+        "id": "NFR-1",
+        "category": "performance",
+        "requirement": "The expiry check on redirect uses the already-loaded link row and adds no extra database query. The existing latency targets still hold: redirect p95 < 50 ms and create p95 < 100 ms on the reference test setup.",
+        "measure": "Existing performance test (NFR-4 in the current suite) stays green. A test counting SQL statements (SQLAlchemy event listener) shows GET /{code} issues the same number of queries as before for active, expired and deactivated links."
+      },
+      {
+        "id": "NFR-2",
+        "category": "security",
+        "requirement": "Only http and https target URLs are accepted, in any letter case. Alias and expires_at input is strictly validated. The management endpoints, including alias and expiry creation, stay behind the fail-closed X-API-Key check. Error responses are JSON {\"detail\": ...} and never contain stack traces.",
+        "measure": "BUG-77 regression tests (FR-11), alias and expiry validation tests, tests/test_auth.py, and tests asserting that 409/410/422 bodies contain only `detail` and no traceback text."
+      },
+      {
+        "id": "NFR-3",
+        "category": "reliability",
+        "requirement": "The schema migration is idempotent and safe to run on every startup, against both fresh and pre-CR-142 databases, with no data loss.",
+        "measure": "tests/test_migration.py: boot on a legacy SQLite file twice; row count and existing data are preserved and the column is present."
+      },
+      {
+        "id": "NFR-4",
+        "category": "reliability",
+        "requirement": "Alias creation is atomic. Under a uniqueness race exactly one request succeeds, the rest get 409, and no partial rows (link or idempotency record) remain.",
+        "measure": "Monkeypatched IntegrityError test on the alias path asserts 409, rollback and zero extra rows in links and idempotency_keys."
+      },
+      {
+        "id": "NFR-5",
+        "category": "maintainability",
+        "requirement": "The layered architecture is preserved. The reserved list has a single source of truth (codes.RESERVED_CODES), or a test asserts that any duplicate equals it. Expiry logic uses an injectable clock. Each new test docstring cites the FR/NFR ids it covers, plus BUG-77 where relevant. Total line coverage stays at or above 95%.",
+        "measure": "Architecture tests green, coverage report from pytest-cov \u2265 95%, and a grep of test docstrings for 'Covers:' on all new tests."
+      },
+      {
+        "id": "NFR-6",
+        "category": "maintainability",
+        "requirement": "The schema change and queries stay portable across SQLite, PostgreSQL and MySQL through DATABASE_URL: generic DateTime, literal ANSI DDL, no dialect-specific SQL.",
+        "measure": "Static architecture tests (portable sqltypes, literal text()) and a code review of the DDL string."
+      },
+      {
+        "id": "NFR-7",
+        "category": "operability",
+        "requirement": "Startup logs one structured JSON line when the migration adds the column, and nothing or a debug line when no change is needed. Request logs keep their current fields and never include client IPs.",
+        "measure": "A test using caplog asserts the migration log line on a legacy DB. Existing logging tests stay green."
+      },
+      {
+        "id": "NFR-8",
+        "category": "privacy",
+        "requirement": "No new personal data is collected or logged. Aliases and expiry timestamps are not written to logs beyond the existing request path logging.",
+        "measure": "Code review and the existing logging tests."
+      }
+    ],
+    "ambiguities": [
+      {
+        "id": "Q-1",
+        "question": "Are aliases case-sensitive, so that 'MyLink' and 'mylink' are distinct links?",
+        "why": "Changes the uniqueness checks, the lookup and possibly the DB collation. MySQL default collations already behave case-insensitively.",
+        "options": [
+          "Case-sensitive, stored as given (follows the existing code semantics)",
+          "Case-insensitive, normalised to lower case",
+          "Case-insensitive uniqueness with case preserved"
+        ],
+        "default": "Case-sensitive and stored as given, matching the existing generated codes. The reserved-word check is case-insensitive. The MySQL collation caveat is documented.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-2",
+        "question": "Can the alias of an expired or deactivated link be reused by a new link?",
+        "why": "Reuse would need deleting or renaming old rows, and it breaks stats and audit history.",
+        "options": [
+          "No: any existing code (active, deactivated or expired) gives 409",
+          "Yes: reclaim expired or deactivated codes"
+        ],
+        "default": "No. Any existing code gives 409. Soft-deleted and expired rows keep their code.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-3",
+        "question": "Which status and message apply when a link is both deactivated and expired, and what is the detail text for expired links?",
+        "why": "Only the detail text in 410 responses and the tests change.",
+        "options": [
+          "410 'Link has been deactivated' takes precedence; expired-only gives 410 'Link has expired'",
+          "410 'Link has expired' takes precedence"
+        ],
+        "default": "Deactivation takes precedence. An expired-only link returns 410 {\"detail\": \"Link has expired\"}.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-4",
+        "question": "How should naive (no timezone offset) expires_at values be interpreted, and are non-ISO inputs such as Unix timestamps allowed?",
+        "why": "Affects validation strictness and possible time shifts in stored expiries.",
+        "options": [
+          "Naive = UTC, strict ISO-8601 strings only",
+          "Reject naive values with 422",
+          "Accept lax Pydantic parsing (numbers allowed)"
+        ],
+        "default": "Naive values are treated as UTC (consistent with the existing _as_utc). Only ISO-8601 strings are accepted, and numbers or other types give 422.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-5",
+        "question": "Should the schema migration run automatically at startup or only as a documented manual step?",
+        "why": "Determines deployment steps and whether a new dependency is needed.",
+        "options": [
+          "Automatic idempotent ALTER at startup plus documented manual SQL",
+          "Manual SQL only",
+          "Introduce Alembic"
+        ],
+        "default": "Automatic idempotent ALTER at startup after create_all, with the manual SQL documented in OPERATIONS.md. No Alembic in this change.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-6",
+        "question": "Should the reserved list be exactly the seven CR words, or keep the existing extra entries (static, favicon.ico)?",
+        "why": "Removing entries would weaken existing protection of those paths.",
+        "options": [
+          "Superset: keep existing entries and add metrics",
+          "Exactly the seven listed words"
+        ],
+        "default": "Superset. Keep static and favicon.ico and add metrics.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-7",
+        "question": "Is there a maximum expiry horizon, or a minimum lifetime, for expires_at?",
+        "why": "Adds validation rules and possibly config settings.",
+        "options": [
+          "No limit beyond 'must be in the future'",
+          "Cap, e.g. 10 years",
+          "Minimum lifetime, e.g. 1 minute"
+        ],
+        "default": "No limit beyond being strictly in the future at request time.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-8",
+        "question": "Can expires_at or alias be changed after creation (for example via PATCH)?",
+        "why": "A new endpoint would be a larger scope change.",
+        "options": [
+          "No, immutable in this CR",
+          "Add PATCH /api/links/{code}"
+        ],
+        "default": "No. Both are set only at creation. Updating them is out of scope.",
+        "blocking": false,
+        "resolved_by": null
+      },
+      {
+        "id": "Q-9",
+        "question": "BUG-77: the validator does not reproduce either claim. Should behaviour change at all, for example by trimming surrounding whitespace or re-validating stored URLs at redirect time?",
+        "why": "Trimming would change accepted inputs. Redirect-time validation adds work on the hot path.",
+        "options": [
+          "No behaviour change; add regression tests and document the findings",
+          "Trim surrounding whitespace before validation",
+          "Also re-validate stored URLs at redirect"
+        ],
+        "default": "No change to URL validation behaviour. Add regression tests, and record the findings (likely 401 from the API key, pasted whitespace, or direct DB inserts) in CHANGELOG and the support response.",
+        "blocking": false,
+        "resolved_by": null
+      }
+    ],
+    "assumptions": [
+      "The alias request field is named `alias`. The response keeps reporting the short code in the existing `code` field. No separate alias field is added to responses.",
+      "Expiry is evaluated against server UTC time through an injectable clock. Comparison: expired when expires_at <= now. Creation requires expires_at > now.",
+      "Datetimes are stored as naive UTC (the existing convention) and serialised in responses as UTC with a 'Z' suffix.",
+      "Reserved-word and alias-uniqueness rules are enforced in the service layer with a new 422 domain error, using codes.RESERVED_CODES as the single source of truth. Format, length and expires_at future checks may run in the schema.",
+      "Redirect (GET and HEAD /{code}) stays public. Only /api/links* needs X-API-Key.",
+      "Expired links are still counted as is_active=true unless deactivated. Expiry is reported separately via is_expired.",
+      "No index on links.expires_at is needed. It is only read per row.",
+      "The 165-test baseline and the existing NFR-4 performance targets are the regression benchmark.",
+      "Existing rows get expires_at NULL and never expire.",
+      "Cross-database portability (SQLite/PostgreSQL/MySQL) is tracked under the maintainability category (NFR-6)."
+    ],
+    "out_of_scope": [
+      "Updating alias or expires_at after creation (no PATCH endpoint).",
+      "Background purge or deletion of expired links, and reclaiming expired or deactivated codes.",
+      "Introducing Alembic or other migration tooling.",
+      "Changing URL validation behaviour for BUG-77 (no defect found), such as trimming whitespace or allowing additional schemes.",
+      "Re-validating stored URLs at redirect time.",
+      "Changing MySQL collation for links.code.",
+      "Vanity-domain or per-user alias namespaces, and alias reservation or ownership by API key.",
+      "Implementing a /metrics endpoint (the word is only reserved)."
+    ],
+    "risks": [
+      {
+        "id": "R1",
+        "description": "Existing databases lack links.expires_at, and create_all will not add it, so every link query would return 503 after deploy.",
+        "likelihood": "high",
+        "impact": "high",
+        "mitigation": "FR-8 adds an idempotent startup migration plus documented manual SQL, and a legacy-DB boot test. For multi-instance rollout, migrate once first and tolerate 'duplicate column' errors."
+      },
+      {
+        "id": "R2",
+        "description": "Changing the idempotency hash formula could break replay of keys stored before deploy.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Keep sha256(url) when alias and expires_at are absent (FR-9), and test with a pre-inserted legacy row."
+      },
+      {
+        "id": "R3",
+        "description": "Widening lookup by editing CODE_PATTERN would break tests/test_codes.py.",
+        "likelihood": "high",
+        "impact": "medium",
+        "mitigation": "Add a separate lookup/alias validator and leave is_valid_code_format base62-only (FR-4)."
+      },
+      {
+        "id": "R4",
+        "description": "The alias path could share the IntegrityError retry path, giving 503 or a random code instead of 409.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Separate alias branch: single insert, IntegrityError leads to rollback and 409. Covered by a race test (FR-3, NFR-4)."
+      },
+      {
+        "id": "R5",
+        "description": "Mixing naive and aware datetimes causes TypeError (500) or expiry shifted by the UTC offset.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Normalise to aware UTC in the schema, persist naive UTC, use an injectable clock, and test offset and naive inputs (FR-5)."
+      },
+      {
+        "id": "R6",
+        "description": "The reserved list drifts between schema and service if duplicated, because of the architecture constraint.",
+        "likelihood": "medium",
+        "impact": "low",
+        "mitigation": "Enforce reserved words in the service using codes.RESERVED_CODES, or add an equality test if duplicated (NFR-5)."
+      },
+      {
+        "id": "R7",
+        "description": "Backend-dependent case-sensitivity (MySQL) gives different alias collision and lookup behaviour.",
+        "likelihood": "low",
+        "impact": "low",
+        "mitigation": "Document it in OPERATIONS.md. Defer binary collation to a later change. Tests use SQLite semantics."
+      },
+      {
+        "id": "R8",
+        "description": "The computed is_expired makes idempotent replay bodies differ over time, and the expiry check could slow the redirect hot path.",
+        "likelihood": "low",
+        "impact": "low",
+        "mitigation": "Compute from the loaded row with no extra query (NFR-1). Document that replays reflect current state, as is_active already does."
+      },
+      {
+        "id": "R9",
+        "description": "Lax Pydantic datetime parsing accepts integers or loose formats for expires_at.",
+        "likelihood": "medium",
+        "impact": "low",
+        "mitigation": "Strict ISO-8601 parsing, with tests asserting 422 for numeric input (FR-5)."
+      },
+      {
+        "id": "R10",
+        "description": "BUG-77 reporters may expect a code fix. Closing it as not reproducible could leave the real cause (auth 401, pasted whitespace, direct DB inserts) unaddressed.",
+        "likelihood": "medium",
+        "impact": "low",
+        "mitigation": "Regression tests lock in the behaviour (FR-11). CHANGELOG and the support reply list the likely causes. Stale 'no authentication' docs are corrected (FR-14) so that 401s are understood."
+      }
+    ]
+  }
+}
